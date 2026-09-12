@@ -122,11 +122,59 @@ const UPLOAD_DIR = path.join(process.cwd(), "uploads");
 try { fs.mkdirSync(UPLOAD_DIR, { recursive: true }); } catch {}
 
 // ── AI Analysis Cache ──────────────────────────────────────────
-// Stores LLM results keyed by complaintId so repeated page views
-// don't re-run the expensive Llama Parse + GLM-5.2 pipeline.
-// Results persist for the server's lifetime (no TTL — hazard
-// assessments don't change for the same complaint + photo).
+// In-memory cache for fast lookups. Also persisted to Supabase
+// (ai_analyses table) so results survive server restarts and
+// are visible to all clients (e.g. your friend's local machine).
 const aiCache = new Map();
+
+/** Save an AI analysis result to Supabase (upsert by complaint_id) */
+async function saveAIAnalysis(complaintId, result) {
+  const { error } = await supabase
+    .from("ai_analyses")
+    .upsert({
+      complaint_id: complaintId,
+      danger_score: result.dangerScore,
+      hazards: result.hazards,
+      is_unsure: result.isUnsure,
+      text_image_conflict: result.textImageConflict,
+      confidence: result.confidence,
+      reasoning: result.reasoning,
+      has_image: result.hasImage,
+      photo_description: result.photoDescription,
+      summary: result.summary,
+    });
+  if (error) {
+    console.warn(`[AI DB] Failed to save analysis for ${complaintId}:`, error.message);
+  }
+}
+
+/** Load ALL AI analyses from Supabase into the in-memory cache (on startup) */
+async function loadAIAnalysesFromDB() {
+  const { data, error } = await supabase.from("ai_analyses").select("*");
+  if (error) {
+    console.warn("[AI DB] Failed to load analyses:", error.message);
+    return;
+  }
+  if (data) {
+    for (const row of data) {
+      aiCache.set(`ai:${row.complaint_id}`, {
+        dangerScore: row.danger_score,
+        hazards: row.hazards,
+        isUnsure: row.is_unsure,
+        textImageConflict: row.text_image_conflict,
+        confidence: row.confidence,
+        reasoning: row.reasoning,
+        hasImage: row.has_image,
+        photoDescription: row.photo_description,
+        summary: row.summary,
+      });
+    }
+    console.log(`[AI DB] Loaded ${data.length} cached analyses from Supabase`);
+  }
+}
+
+// Load cached AI analyses on startup (non-blocking)
+loadAIAnalysesFromDB();
 
 // In-memory cache with TTL
 const cache = new Map();
@@ -335,6 +383,23 @@ const server = http.createServer(async (req, res) => {
 
       const complaint = createCitizenComplaint(fields, photoFile);
 
+      // Auto-trigger AI analysis for the new complaint (non-blocking)
+      if (complaint.photoUrl || complaint.complaintText) {
+        const photoPath = complaint.photoUrl
+          ? path.join(UPLOAD_DIR, path.basename(complaint.photoUrl))
+          : null;
+        const cacheKey = `ai:${complaint.id}`;
+        analyzeHazard(complaint.complaintText, photoPath)
+          .then((result) => {
+            aiCache.set(cacheKey, result);
+            saveAIAnalysis(complaint.id, result);
+            console.log(`[AI Auto] Analyzed new complaint ${complaint.id} — dangerScore=${result.dangerScore}`);
+          })
+          .catch((err) => {
+            console.error(`[AI Auto] Failed for ${complaint.id}:`, err.message);
+          });
+      }
+
       return sendJson(res, 201, {
         id: complaint.id,
         message: "Complaint submitted successfully",
@@ -373,6 +438,54 @@ const server = http.createServer(async (req, res) => {
     if (reqPath === "/api/311-stats") {
       const stats = await getCached("311-stats", () => fetchTree311Stats());
       return sendJson(res, 200, stats);
+    }
+
+    // Batch-analyze ALL complaints with AI (one-time bulk run)
+    // Processes complaints that don't have cached AI results yet.
+    // Returns immediately with a job ID; client polls /api/ai-scores for progress.
+    if (reqPath === "/api/analyze-all" && req.method === "POST") {
+      // Get all complaints
+      const hrmComplaints = await getCached("complaints", () =>
+        generateComplaintsFromHRM(20)
+      );
+      const citizen = await fetchCitizenComplaints();
+      const all = [...citizen, ...hrmComplaints];
+
+      // Filter to complaints not yet analyzed
+      const pending = all.filter((c) => !aiCache.has(`ai:${c.id}`));
+      const alreadyCached = all.length - pending.length;
+
+      // Process in background (non-blocking) — 3 at a time
+      (async () => {
+        const CONCURRENCY = 3;
+        let idx = 0;
+        async function processOne() {
+          while (idx < pending.length) {
+            const current = idx++;
+            const c = pending[current];
+            try {
+              const photoPath = c.photoUrl
+                ? path.join(UPLOAD_DIR, path.basename(c.photoUrl))
+                : null;
+              const result = await analyzeHazard(c.complaintText, photoPath);
+              aiCache.set(`ai:${c.id}`, result);
+              saveAIAnalysis(c.id, result);
+              console.log(`[AI Batch] ${current + 1}/${pending.length} — ${c.id} dangerScore=${result.dangerScore}`);
+            } catch (err) {
+              console.error(`[AI Batch] Failed for ${c.id}:`, err.message);
+            }
+          }
+        }
+        await Promise.all(Array.from({ length: CONCURRENCY }, () => processOne()));
+        console.log(`[AI Batch] Complete — ${aiCache.size} total cached results`);
+      })();
+
+      return sendJson(res, 200, {
+        message: "Batch analysis started",
+        total: all.length,
+        pending: pending.length,
+        alreadyCached,
+      });
     }
 
     // Get cached AI scores for all complaints (for dashboard live scores)
@@ -457,6 +570,7 @@ const server = http.createServer(async (req, res) => {
       try {
         const result = await analyzeHazard(complaintText, photoPath);
         aiCache.set(cacheKey, result);
+        if (complaintId) saveAIAnalysis(complaintId, result);
         console.log(`[AI Cache] Stored result for ${cacheKey}`);
         return sendJson(res, 200, result);
       } catch (err) {

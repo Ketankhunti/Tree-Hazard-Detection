@@ -190,6 +190,24 @@ export async function fetchAIScores(): Promise<Record<string, AIHazardAnalysis>>
 }
 
 /**
+ * Trigger batch AI analysis for all complaints that don't have cached results yet.
+ * Returns immediately with counts; the dashboard polls /api/ai-scores for live progress.
+ */
+export async function fetchAnalyzeAll(): Promise<{
+  message: string;
+  total: number;
+  pending: number;
+  alreadyCached: number;
+}> {
+  const res = await fetch(`${API_BASE}/analyze-all`, {
+    method: "POST",
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+/**
  * AI hazard analysis result from the backend LLM.
  */
 export interface AIHazardAnalysis {
