@@ -26,6 +26,7 @@ import {
   generateComplaintsFromHRM,
   getHalifaxTreeInventory,
 } from "./complaintGenerator.js";
+import { supabase } from "./supabaseClient.js";
 
 const PORT = process.env.PORT || 3001;
 const CORS_HEADERS = {
@@ -35,9 +36,85 @@ const CORS_HEADERS = {
   "Content-Type": "application/json",
 };
 
-// Store citizen-submitted complaints in memory
+// Fallback in-memory store (used if Supabase is unavailable)
 const citizenComplaints = [];
 let citizenCounter = 1000;
+
+// ── Supabase helpers ──────────────────────────────────────────
+
+/** Map a Supabase row (snake_case) → frontend complaint (camelCase) */
+function rowToComplaint(row) {
+  return {
+    id: row.id,
+    address: row.address,
+    street: row.street ?? "",
+    neighborhood: row.neighborhood,
+    complaintText: row.complaint_text,
+    daysWaiting: row.days_waiting,
+    submittedDate: row.submitted_date,
+    status: row.status,
+    latitude: row.latitude,
+    longitude: row.longitude,
+    photoUrl: row.photo_url ?? null,
+    source: row.source ?? "citizen",
+  };
+}
+
+/** Fetch all citizen complaints from Supabase (newest first) */
+async function fetchCitizenComplaints() {
+  const { data, error } = await supabase
+    .from("complaints")
+    .select("*")
+    .order("submitted_date", { ascending: false });
+
+  if (error) {
+    console.warn("Supabase fetch failed, using in-memory fallback:", error.message);
+    return citizenComplaints;
+  }
+  return data.map(rowToComplaint);
+}
+
+/** Save a citizen complaint to Supabase (and in-memory fallback) */
+async function saveCitizenComplaint(complaint) {
+  // Always keep in-memory copy as fallback
+  citizenComplaints.unshift(complaint);
+
+  const { error } = await supabase.from("complaints").insert({
+    id: complaint.id,
+    address: complaint.address,
+    street: complaint.street,
+    neighborhood: complaint.neighborhood,
+    complaint_text: complaint.complaintText,
+    days_waiting: complaint.daysWaiting,
+    submitted_date: complaint.submittedDate,
+    status: complaint.status,
+    latitude: complaint.latitude,
+    longitude: complaint.longitude,
+    photo_url: complaint.photoUrl,
+    source: complaint.source,
+  });
+
+  if (error) {
+    console.warn("Supabase insert failed, kept in-memory copy:", error.message);
+  }
+
+  return complaint;
+}
+
+/** Fetch a single citizen complaint by ID from Supabase */
+async function fetchCitizenComplaintById(id) {
+  const { data, error } = await supabase
+    .from("complaints")
+    .select("*")
+    .eq("id", id)
+    .single();
+
+  if (error) {
+    // Fallback to in-memory
+    return citizenComplaints.find((c) => c.id === id) || null;
+  }
+  return data ? rowToComplaint(data) : null;
+}
 
 // Directory for uploaded photos
 const UPLOAD_DIR = path.join(process.cwd(), "uploads");
@@ -148,7 +225,8 @@ function createCitizenComplaint(fields, photoFile) {
     source: "citizen",
   };
 
-  citizenComplaints.unshift(complaint);
+  // Persist to Supabase (async, non-blocking — fallback keeps in-memory copy)
+  saveCitizenComplaint(complaint);
 
   // Invalidate complaints cache so the new complaint shows up
   cache.delete("complaints");
@@ -196,8 +274,9 @@ const server = http.createServer(async (req, res) => {
       const hrmComplaints = await getCached("complaints", () =>
         generateComplaintsFromHRM(20)
       );
-      // Merge citizen complaints (most recent first) with HRM data
-      const all = [...citizenComplaints, ...hrmComplaints];
+      // Fetch citizen complaints from Supabase (falls back to in-memory)
+      const citizen = await fetchCitizenComplaints();
+      const all = [...citizen, ...hrmComplaints];
       return sendJson(res, 200, { complaints: all, count: all.length });
     }
 
@@ -241,8 +320,8 @@ const server = http.createServer(async (req, res) => {
     const complaintMatch = path.match(/^\/api\/complaints\/(.+)$/);
     if (complaintMatch && req.method === "GET") {
       const id = complaintMatch[1];
-      // Check citizen complaints first
-      const citizen = citizenComplaints.find((c) => c.id === id);
+      // Check citizen complaints first (Supabase with in-memory fallback)
+      const citizen = await fetchCitizenComplaintById(id);
       if (citizen) return sendJson(res, 200, citizen);
       // Then check HRM data
       const hrmComplaints = await getCached("complaints", () =>
