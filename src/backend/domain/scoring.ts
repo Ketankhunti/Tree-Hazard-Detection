@@ -727,6 +727,7 @@ export function scoreRequest(
       escalationReason: escalation.reason,
       fusion: classification.fusion,
     }),
+    source: classification.source,
   };
 }
 

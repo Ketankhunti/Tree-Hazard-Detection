@@ -8,6 +8,7 @@ import {
   pickAutoLink,
   type DuplicateCandidate,
 } from "@/backend/domain/duplicates";
+import { config, hasLLM } from "@/backend/config";
 import { extractGps } from "@/backend/services/exif";
 import { resolveLocation } from "@/backend/services/geocode";
 import {
@@ -27,6 +28,10 @@ import {
 } from "@/backend/services/storage";
 import type { Classification, RequestStatus } from "@/shared/types";
 import { analyzeImage, canAnalyze } from "@/backend/services/vision";
+import {
+  analyzeHazard,
+  aiResultToClassification,
+} from "@/backend/services/llmClient";
 
 /**
  * The submission pipeline.
@@ -120,7 +125,22 @@ export async function submitRequest(
   let classification = classifyComplaint(input.description);
   let photoAnalyzed = false;
 
-  if (photo && canAnalyze(photo.mimeType)) {
+  // When the GLM-5.2 LLM pipeline is configured, use it instead of the
+  // Anthropic vision pass. Llama Parse extracts the photo description, then
+  // GLM-5.2 analyzes text + description together with anti-gaming rules.
+  if (hasLLM()) {
+    try {
+      const aiResult = await analyzeHazard(
+        input.description,
+        photo?.data ?? null,
+        photo?.mimeType ?? null
+      );
+      classification = aiResultToClassification(aiResult);
+      photoAnalyzed = aiResult.hasImage;
+    } catch (err) {
+      console.error("[LLM] Analysis failed, falling back to text-only:", (err as Error).message);
+    }
+  } else if (photo && canAnalyze(photo.mimeType)) {
     const findings = await analyzeImage(
       photo.data,
       photo.mimeType,

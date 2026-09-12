@@ -209,6 +209,8 @@ export interface Assessment {
   /** Carried through so the admin UI can show how the photo affected the score. */
   imageFindings: ImageFindings | null;
   fusion: Fusion;
+  /** Which analyzer produced the underlying classification. */
+  source: "text" | "image" | "fused";
 }
 
 /** A request joined with its live assessment - what the admin UI renders. */

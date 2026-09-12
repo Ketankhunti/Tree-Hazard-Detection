@@ -49,3 +49,9 @@ dist
 
 .env
 .env.local
+
+# Temp upload files
+backend/uploads/
+var/
+tsconfig.tsbuildinfo
+

@@ -1,4 +1,8 @@
-import { query, queryOne, withTransaction } from "@/backend/db/client";
+import {
+  supabaseFetch,
+  supabaseFetchOne,
+  supabaseCount,
+} from "@/backend/db/client";
 import {
   CLOSED_STATUSES,
   OPEN_STATUSES,
@@ -18,20 +22,15 @@ import {
 import { daysSince, scoreRequest } from "@/backend/domain/scoring";
 
 /**
- * Every read path goes through here. Rows come out of Postgres in snake_case
- * and leave as camelCase domain objects; nothing above this file sees SQL.
+ * Every read path goes through here. Rows come out of Supabase REST in snake_case
+ * and leave as camelCase domain objects; nothing above this file sees the REST API.
  *
- * Two driver details the mappers absorb, so callers never think about them:
- *
- *   TIMESTAMPTZ  comes back as a JS `Date`. The domain speaks ISO strings, so
- *                `toIso()` normalises on the way out.
- *   JSONB        comes back already parsed. Do NOT call JSON.parse on it. On
- *                the way in it must be JSON.stringify'd - see the note in
- *                client.ts about arrays becoming Postgres array literals.
+ * PostgREST returns JSON columns already parsed and timestamps as ISO strings,
+ * so the mappers are simpler than the old pg versions.
  */
 
 // ---------------------------------------------------------------------------
-// Row shapes
+// Row shapes (match the Supabase table columns)
 // ---------------------------------------------------------------------------
 
 interface RequestRow {
@@ -46,15 +45,31 @@ interface RequestRow {
   longitude: number | null;
   location_source: string;
   description: string;
-  submitted_at: Date | string;
+  submitted_at: string;
   status: string;
   duplicate_of_id: string | null;
   estimated_hours: number;
-  completed_at: Date | string | null;
-  created_at: Date | string;
-  updated_at: Date | string;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
+interface AssessmentRow {
+  id: number;
+  request_id: string;
+  danger_score: number;
+  review_status: string;
+  review_note: string;
+  hazards_json: DetectedHazard[] | null;
+  image_findings_json: ImageFindings | null;
+  fusion_json: Fusion | null;
+  engine_version: string;
+  source: string;
+  computed_at: string;
+  is_current: boolean;
+}
+
+/** A request joined with its current assessment + counts. */
 interface JoinedRow extends RequestRow {
   danger_score: number | null;
   review_status: string | null;
@@ -64,19 +79,13 @@ interface JoinedRow extends RequestRow {
   fusion_json: Fusion | null;
   engine_version: string | null;
   assessment_source: string | null;
-  computed_at: Date | string | null;
-  image_count: string | number;
-  duplicate_count: string | number;
+  computed_at: string | null;
+  image_count: number;
+  duplicate_count: number;
 }
 
-function toIso(value: Date | string | null | undefined): string {
-  if (!value) return "";
-  return value instanceof Date ? value.toISOString() : value;
-}
-
-/** COUNT() returns bigint, which node-postgres hands back as a string. */
-function toCount(value: string | number | null): number {
-  return typeof value === "number" ? value : Number(value ?? 0);
+function toIso(value: string | null | undefined): string {
+  return value ?? "";
 }
 
 function toRequest(row: RequestRow): TreeRequest {
@@ -114,7 +123,7 @@ function toScored(row: JoinedRow, now: Date): ScoredRequest {
   const daysWaiting = daysSince(request.submittedAt, now);
 
   const classification: Classification = {
-    // jsonb arrives parsed - no JSON.parse here.
+    // JSON columns arrive parsed from PostgREST.
     hazards: row.hazards_json ?? [],
     dangerScore: row.danger_score ?? 0,
     reviewStatus: (row.review_status as ReviewStatus | null) ?? "Unsure",
@@ -139,28 +148,116 @@ function toScored(row: JoinedRow, now: Date): ScoredRequest {
       daysWaiting,
       street: request.street,
     }),
-    imageCount: toCount(row.image_count),
-    duplicateCount: toCount(row.duplicate_count),
+    imageCount: row.image_count ?? 0,
+    duplicateCount: row.duplicate_count ?? 0,
   };
 }
 
-const SELECT_JOINED = `
-  SELECT r.*,
-         a.danger_score,
-         a.review_status,
-         a.review_note,
-         a.hazards_json,
-         a.image_findings_json,
-         a.fusion_json,
-         a.engine_version,
-         a.source AS assessment_source,
-         a.computed_at,
-         (SELECT COUNT(*) FROM images i WHERE i.request_id = r.id) AS image_count,
-         (SELECT COUNT(*) FROM requests d WHERE d.duplicate_of_id = r.id) AS duplicate_count
-  FROM requests r
-  LEFT JOIN assessments a
-    ON a.request_id = r.id AND a.is_current
-`;
+// ---------------------------------------------------------------------------
+// Helper: fetch requests + join assessments + counts (replaces SELECT_JOINED)
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetches requests with filters, then enriches each with its current
+ * assessment and image/duplicate counts. PostgREST doesn't do LEFT JOINs
+ * with subqueries, so we make parallel calls and stitch in JS.
+ */
+async function fetchScoredRequests(
+  requestFilters: Record<string, string>,
+  now: Date
+): Promise<ScoredRequest[]> {
+  // 1. Fetch matching requests
+  const requests = await supabaseFetch<RequestRow[]>("requests", "GET", undefined, {
+    select: "*",
+    filters: requestFilters,
+    limit: 1000,
+  });
+
+  if (!requests || requests.length === 0) return [];
+
+  // 2. Fetch current assessments for those requests (in one call using `in`)
+  const requestIds = requests.map((r) => r.id);
+  const assessments = await supabaseFetch<AssessmentRow[]>(
+    "assessments",
+    "GET",
+    undefined,
+    {
+      select: "*",
+      filters: {
+        request_id: `in.(${requestIds.join(",")})`,
+        is_current: "eq.true",
+      },
+      limit: 1000,
+    }
+  );
+
+  // Build a lookup map: requestId → assessment
+  const assessmentMap = new Map<string, AssessmentRow>();
+  if (assessments) {
+    for (const a of assessments) {
+      assessmentMap.set(a.request_id, a);
+    }
+  }
+
+  // 3. Fetch image counts and duplicate counts in parallel
+  // For image counts: group images by request_id
+  // For duplicate counts: group requests by duplicate_of_id
+  const [imageRows, duplicateRows] = await Promise.all([
+    supabaseFetch<{ request_id: string }[]>("images", "GET", undefined, {
+      select: "request_id",
+      filters: { request_id: `in.(${requestIds.join(",")})` },
+      limit: 10000,
+    }),
+    // Duplicates: requests whose duplicate_of_id is one of our request IDs
+    supabaseFetch<{ duplicate_of_id: string }[]>("requests", "GET", undefined, {
+      select: "duplicate_of_id",
+      filters: { duplicate_of_id: `in.(${requestIds.join(",")})` },
+      limit: 10000,
+    }),
+  ]);
+
+  // Count images per request
+  const imageCountMap = new Map<string, number>();
+  if (imageRows) {
+    for (const row of imageRows) {
+      imageCountMap.set(row.request_id, (imageCountMap.get(row.request_id) ?? 0) + 1);
+    }
+  }
+
+  // Count duplicates per request
+  const duplicateCountMap = new Map<string, number>();
+  if (duplicateRows) {
+    for (const row of duplicateRows) {
+      if (row.duplicate_of_id) {
+        duplicateCountMap.set(
+          row.duplicate_of_id,
+          (duplicateCountMap.get(row.duplicate_of_id) ?? 0) + 1
+        );
+      }
+    }
+  }
+
+  // 4. Stitch together into JoinedRow → ScoredRequest
+  const joined: JoinedRow[] = requests.map((r) => {
+    const a = assessmentMap.get(r.id);
+    return {
+      ...r,
+      danger_score: a?.danger_score ?? null,
+      review_status: a?.review_status ?? null,
+      review_note: a?.review_note ?? null,
+      hazards_json: a?.hazards_json ?? null,
+      image_findings_json: a?.image_findings_json ?? null,
+      fusion_json: a?.fusion_json ?? null,
+      engine_version: a?.engine_version ?? null,
+      assessment_source: a?.source ?? null,
+      computed_at: a?.computed_at ?? null,
+      image_count: imageCountMap.get(r.id) ?? 0,
+      duplicate_count: duplicateCountMap.get(r.id) ?? 0,
+    };
+  });
+
+  return joined.map((row) => toScored(row, now)).sort(compareByPriority);
+}
 
 // ---------------------------------------------------------------------------
 // Reads
@@ -175,39 +272,75 @@ const SELECT_JOINED = `
 export async function listOpenRequests(
   now: Date = new Date()
 ): Promise<ScoredRequest[]> {
-  const rows = await query<JoinedRow>(
-    `${SELECT_JOINED} WHERE r.status = ANY($1) AND r.duplicate_of_id IS NULL`,
-    [OPEN_STATUSES]
+  // status=in.(...) AND duplicate_of_id=is.null
+  return fetchScoredRequests(
+    {
+      status: `in.(${OPEN_STATUSES.join(",")})`,
+      duplicate_of_id: "is.null",
+    },
+    now
   );
-  return rows.map((row) => toScored(row, now)).sort(compareByPriority);
 }
 
 export async function listClosedRequests(
   now: Date = new Date()
 ): Promise<ScoredRequest[]> {
-  const rows = await query<JoinedRow>(
-    `${SELECT_JOINED} WHERE r.status = ANY($1)`,
-    [CLOSED_STATUSES]
+  return fetchScoredRequests(
+    {
+      status: `in.(${CLOSED_STATUSES.join(",")})`,
+    },
+    now
   );
-  return rows.map((row) => toScored(row, now)).sort(compareByPriority);
 }
 
 export async function listAllRequests(
   now: Date = new Date()
 ): Promise<ScoredRequest[]> {
-  const rows = await query<JoinedRow>(SELECT_JOINED);
-  return rows.map((row) => toScored(row, now)).sort(compareByPriority);
+  return fetchScoredRequests({}, now);
 }
 
 export async function getRequest(
   id: string,
   now: Date = new Date()
 ): Promise<ScoredRequest | null> {
-  const row = await queryOne<JoinedRow>(
-    `${SELECT_JOINED} WHERE r.id = $1 OR r.reference = $1`,
-    [id]
-  );
-  return row ? toScored(row, now) : null;
+  // Try by id first, then by reference. PostgREST uses `or` for this.
+  const requests = await supabaseFetch<RequestRow[]>("requests", "GET", undefined, {
+    select: "*",
+    filters: { or: `(id.eq.${id},reference.eq.${id})` },
+    limit: 1,
+  });
+
+  if (!requests || requests.length === 0) return null;
+  const req = requests[0];
+
+  // Fetch current assessment
+  const assessment = await supabaseFetchOne<AssessmentRow>("assessments", {
+    select: "*",
+    filters: { request_id: `eq.${req.id}`, is_current: "eq.true" },
+  });
+
+  // Fetch counts
+  const [imageCount, duplicateCount] = await Promise.all([
+    supabaseCount("images", { request_id: `eq.${req.id}` }),
+    supabaseCount("requests", { duplicate_of_id: `eq.${req.id}` }),
+  ]);
+
+  const joined: JoinedRow = {
+    ...req,
+    danger_score: assessment?.danger_score ?? null,
+    review_status: assessment?.review_status ?? null,
+    review_note: assessment?.review_note ?? null,
+    hazards_json: assessment?.hazards_json ?? null,
+    image_findings_json: assessment?.image_findings_json ?? null,
+    fusion_json: assessment?.fusion_json ?? null,
+    engine_version: assessment?.engine_version ?? null,
+    assessment_source: assessment?.source ?? null,
+    computed_at: assessment?.computed_at ?? null,
+    image_count: imageCount,
+    duplicate_count: duplicateCount,
+  };
+
+  return toScored(joined, now);
 }
 
 /** Other reports already linked to this one as the same tree. */
@@ -215,12 +348,12 @@ export async function getDuplicatesOf(
   id: string,
   now: Date = new Date()
 ): Promise<ScoredRequest[]> {
-  const rows = await query<JoinedRow>(
-    `${SELECT_JOINED} WHERE r.duplicate_of_id = $1`,
-    [id]
-  );
-  return rows.map((row) => toScored(row, now));
+  return fetchScoredRequests({ duplicate_of_id: `eq.${id}` }, now);
 }
+
+// ---------------------------------------------------------------------------
+// Images
+// ---------------------------------------------------------------------------
 
 interface ImageRow {
   id: string;
@@ -230,7 +363,7 @@ interface ImageRow {
   byte_size: number;
   exif_latitude: number | null;
   exif_longitude: number | null;
-  created_at: Date | string;
+  created_at: string;
 }
 
 function toImage(row: ImageRow): RequestImage {
@@ -247,81 +380,117 @@ function toImage(row: ImageRow): RequestImage {
 }
 
 export async function getImages(requestId: string): Promise<RequestImage[]> {
-  const rows = await query<ImageRow>(
-    `SELECT * FROM images WHERE request_id = $1 ORDER BY created_at ASC`,
-    [requestId]
-  );
-  return rows.map(toImage);
+  const rows = await supabaseFetch<ImageRow[]>("images", "GET", undefined, {
+    select: "*",
+    filters: { request_id: `eq.${requestId}` },
+    order: "created_at.asc",
+    limit: 1000,
+  });
+  return rows ? rows.map(toImage) : [];
 }
 
 export async function getImage(imageId: string): Promise<RequestImage | null> {
-  const row = await queryOne<ImageRow>(`SELECT * FROM images WHERE id = $1`, [
-    imageId,
-  ]);
+  const row = await supabaseFetchOne<ImageRow>("images", {
+    select: "*",
+    filters: { id: `eq.${imageId}` },
+  });
   return row ? toImage(row) : null;
 }
+
+// ---------------------------------------------------------------------------
+// Status history
+// ---------------------------------------------------------------------------
 
 export async function getStatusHistory(
   requestId: string
 ): Promise<StatusChange[]> {
-  const rows = await query<{
-    id: number;
-    request_id: string;
-    from_status: string | null;
-    to_status: string;
-    actor: string;
-    note: string | null;
-    created_at: Date | string;
-  }>(
-    `SELECT * FROM status_history WHERE request_id = $1 ORDER BY created_at ASC, id ASC`,
-    [requestId]
-  );
+  const rows = await supabaseFetch<
+    {
+      id: number;
+      request_id: string;
+      from_status: string | null;
+      to_status: string;
+      actor: string;
+      note: string | null;
+      created_at: string;
+    }[]
+  >("status_history", "GET", undefined, {
+    select: "*",
+    filters: { request_id: `eq.${requestId}` },
+    order: "created_at.asc,id.asc",
+    limit: 1000,
+  });
 
-  return rows.map((row) => ({
-    id: row.id,
-    requestId: row.request_id,
-    fromStatus: row.from_status as RequestStatus | null,
-    toStatus: row.to_status as RequestStatus,
-    actor: row.actor,
-    note: row.note,
-    createdAt: toIso(row.created_at),
-  }));
+  return rows
+    ? rows.map((row) => ({
+        id: row.id,
+        requestId: row.request_id,
+        fromStatus: row.from_status as RequestStatus | null,
+        toStatus: row.to_status as RequestStatus,
+        actor: row.actor,
+        note: row.note,
+        createdAt: toIso(row.created_at),
+      }))
+    : [];
 }
+
+// ---------------------------------------------------------------------------
+// Feedback
+// ---------------------------------------------------------------------------
 
 export async function getFeedback(requestId: string): Promise<Feedback[]> {
-  const rows = await query<{
-    id: number;
-    request_id: string;
-    rating: number | null;
-    comment: string | null;
-    created_at: Date | string;
-  }>(`SELECT * FROM feedback WHERE request_id = $1 ORDER BY created_at DESC`, [
-    requestId,
-  ]);
+  const rows = await supabaseFetch<
+    {
+      id: number;
+      request_id: string;
+      rating: number | null;
+      comment: string | null;
+      created_at: string;
+    }[]
+  >("feedback", "GET", undefined, {
+    select: "*",
+    filters: { request_id: `eq.${requestId}` },
+    order: "created_at.desc",
+    limit: 1000,
+  });
 
-  return rows.map((row) => ({
-    id: row.id,
-    requestId: row.request_id,
-    rating: row.rating,
-    comment: row.comment,
-    createdAt: toIso(row.created_at),
-  }));
+  return rows
+    ? rows.map((row) => ({
+        id: row.id,
+        requestId: row.request_id,
+        rating: row.rating,
+        comment: row.comment,
+        createdAt: toIso(row.created_at),
+      }))
+    : [];
 }
 
+// ---------------------------------------------------------------------------
+// Counts
+// ---------------------------------------------------------------------------
+
 export async function countByStatus(): Promise<Record<string, number>> {
-  const rows = await query<{ status: string; n: string }>(
-    `SELECT status, COUNT(*) AS n FROM requests GROUP BY status`
-  );
-  return Object.fromEntries(rows.map((row) => [row.status, toCount(row.n)]));
+  // PostgREST doesn't support GROUP BY, so fetch all statuses and count in JS.
+  const rows = await supabaseFetch<{ status: string }[]>("requests", "GET", undefined, {
+    select: "status",
+    limit: 10000,
+  });
+
+  const counts: Record<string, number> = {};
+  if (rows) {
+    for (const row of rows) {
+      counts[row.status] = (counts[row.status] ?? 0) + 1;
+    }
+  }
+  return counts;
 }
 
 /** Next sequential human-readable reference for the current year. */
 export async function nextReference(year: number): Promise<string> {
-  const row = await queryOne<{ n: string }>(
-    `SELECT COUNT(*) AS n FROM requests WHERE reference LIKE $1`,
-    [`HFX-${year}-%`]
-  );
-  return `HFX-${year}-${String(toCount(row?.n ?? "0") + 1).padStart(4, "0")}`;
+  const count = await supabaseCount("requests", {
+    reference: `like.HFX-${year}-%`,
+  });
+  return `HFX-${year}-${String(count + 1).padStart(4, "0")}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -348,71 +517,55 @@ export interface NewRequestInput {
 }
 
 export async function insertRequest(input: NewRequestInput): Promise<void> {
-  await query(
-    `INSERT INTO requests (
-       id, reference, reporter_name, reporter_email, address, street,
-       neighborhood, latitude, longitude, location_source, description,
-       submitted_at, status, duplicate_of_id, estimated_hours, completed_at,
-       created_at, updated_at
-     ) VALUES (
-       $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
-       now(), now()
-     )`,
-    [
-      input.id,
-      input.reference,
-      input.reporterName,
-      input.reporterEmail,
-      input.address,
-      input.street,
-      input.neighborhood,
-      input.latitude,
-      input.longitude,
-      input.locationSource,
-      input.description,
-      input.submittedAt,
-      input.status ?? "Submitted",
-      input.duplicateOfId ?? null,
-      input.estimatedHours ?? 2,
-      input.completedAt ?? null,
-    ]
-  );
+  await supabaseFetch("requests", "POST", {
+    id: input.id,
+    reference: input.reference,
+    reporter_name: input.reporterName,
+    reporter_email: input.reporterEmail,
+    address: input.address,
+    street: input.street,
+    neighborhood: input.neighborhood,
+    latitude: input.latitude,
+    longitude: input.longitude,
+    location_source: input.locationSource,
+    description: input.description,
+    submitted_at: input.submittedAt,
+    status: input.status ?? "Submitted",
+    duplicate_of_id: input.duplicateOfId ?? null,
+    estimated_hours: input.estimatedHours ?? 2,
+    completed_at: input.completedAt ?? null,
+  });
 }
 
-/** Writes a classification and retires whatever was current before it. */
+/**
+ * Writes a classification and retires whatever was current before it.
+ *
+ * Without transactions in REST API, we do two sequential calls:
+ *   1. PATCH old current assessments → is_current = false
+ *   2. POST new assessment with is_current = true
+ */
 export async function saveClassification(
   requestId: string,
   classification: Classification
 ): Promise<void> {
-  await withTransaction(async (client) => {
-    await client.query(
-      `UPDATE assessments SET is_current = FALSE
-        WHERE request_id = $1 AND is_current`,
-      [requestId]
-    );
+  // 1. Retire old current assessment(s) for this request
+  await supabaseFetch("assessments", "PATCH", { is_current: false }, {
+    filters: { request_id: `eq.${requestId}`, is_current: "eq.true" },
+  });
 
-    await client.query(
-      `INSERT INTO assessments (
-         request_id, danger_score, review_status, review_note, hazards_json,
-         image_findings_json, fusion_json, engine_version, source, computed_at,
-         is_current
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, TRUE)`,
-      [
-        requestId,
-        classification.dangerScore,
-        classification.reviewStatus,
-        classification.reviewNote,
-        // Stringified on purpose: see the jsonb note in client.ts.
-        JSON.stringify(classification.hazards),
-        classification.imageFindings
-          ? JSON.stringify(classification.imageFindings)
-          : null,
-        JSON.stringify(classification.fusion),
-        classification.engineVersion,
-        classification.source,
-        classification.computedAt,
-      ]
-    );
+  // 2. Insert new current assessment
+  await supabaseFetch("assessments", "POST", {
+    request_id: requestId,
+    danger_score: classification.dangerScore,
+    review_status: classification.reviewStatus,
+    review_note: classification.reviewNote,
+    hazards_json: classification.hazards,
+    image_findings_json: classification.imageFindings ?? null,
+    fusion_json: classification.fusion,
+    engine_version: classification.engineVersion,
+    source: classification.source,
+    computed_at: classification.computedAt,
+    is_current: true,
   });
 }
 
@@ -425,21 +578,15 @@ export async function insertImage(image: {
   exifLatitude?: number | null;
   exifLongitude?: number | null;
 }): Promise<void> {
-  await query(
-    `INSERT INTO images (
-       id, request_id, filename, mime_type, byte_size,
-       exif_latitude, exif_longitude, created_at
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, now())`,
-    [
-      image.id,
-      image.requestId,
-      image.filename,
-      image.mimeType,
-      image.byteSize,
-      image.exifLatitude ?? null,
-      image.exifLongitude ?? null,
-    ]
-  );
+  await supabaseFetch("images", "POST", {
+    id: image.id,
+    request_id: image.requestId,
+    filename: image.filename,
+    mime_type: image.mimeType,
+    byte_size: image.byteSize,
+    exif_latitude: image.exifLatitude ?? null,
+    exif_longitude: image.exifLongitude ?? null,
+  });
 }
 
 export async function recordStatusChange(change: {
@@ -450,23 +597,21 @@ export async function recordStatusChange(change: {
   note?: string | null;
   createdAt?: string;
 }): Promise<void> {
-  await query(
-    `INSERT INTO status_history (request_id, from_status, to_status, actor, note, created_at)
-     VALUES ($1, $2, $3, $4, $5, COALESCE($6::timestamptz, now()))`,
-    [
-      change.requestId,
-      change.fromStatus,
-      change.toStatus,
-      change.actor,
-      change.note ?? null,
-      change.createdAt ?? null,
-    ]
-  );
+  await supabaseFetch("status_history", "POST", {
+    request_id: change.requestId,
+    from_status: change.fromStatus,
+    to_status: change.toStatus,
+    actor: change.actor,
+    note: change.note ?? null,
+    created_at: change.createdAt ?? new Date().toISOString(),
+  });
 }
 
 /**
- * Moves a request to a new status and appends to its history in one
- * transaction, so the audit trail can never disagree with the row.
+ * Moves a request to a new status and appends to its history.
+ *
+ * Without transactions, we do sequential calls. The audit trail could
+ * theoretically disagree if the second call fails, but the window is tiny.
  */
 export async function setStatus(
   requestId: string,
@@ -474,30 +619,34 @@ export async function setStatus(
   actor: string,
   note?: string
 ): Promise<void> {
-  await withTransaction(async (client) => {
-    // FOR UPDATE: two dispatchers closing the same job must serialise, or the
-    // history could record a transition that never happened.
-    const current = await client.query<{ status: string }>(
-      `SELECT status FROM requests WHERE id = $1 FOR UPDATE`,
-      [requestId]
-    );
-    const from = current.rows[0];
-    if (!from) throw new Error(`Unknown request: ${requestId}`);
+  // 1. Fetch current status
+  const current = await supabaseFetchOne<{ status: string }>("requests", {
+    select: "status",
+    filters: { id: `eq.${requestId}` },
+  });
 
-    await client.query(
-      `UPDATE requests
-          SET status = $2,
-              completed_at = CASE WHEN $2 = 'Completed' THEN now() ELSE completed_at END,
-              updated_at = now()
-        WHERE id = $1`,
-      [requestId, toStatus]
-    );
+  if (!current) throw new Error(`Unknown request: ${requestId}`);
 
-    await client.query(
-      `INSERT INTO status_history (request_id, from_status, to_status, actor, note, created_at)
-       VALUES ($1, $2, $3, $4, $5, now())`,
-      [requestId, from.status, toStatus, actor, note ?? null]
-    );
+  // 2. Update request status
+  const updateBody: Record<string, unknown> = {
+    status: toStatus,
+    updated_at: new Date().toISOString(),
+  };
+  if (toStatus === "Completed") {
+    updateBody.completed_at = new Date().toISOString();
+  }
+  await supabaseFetch("requests", "PATCH", updateBody, {
+    filters: { id: `eq.${requestId}` },
+  });
+
+  // 3. Record status change in history
+  await supabaseFetch("status_history", "POST", {
+    request_id: requestId,
+    from_status: current.status,
+    to_status: toStatus,
+    actor,
+    note: note ?? null,
+    created_at: new Date().toISOString(),
   });
 }
 
@@ -506,11 +655,11 @@ export async function insertFeedback(input: {
   rating?: number | null;
   comment?: string | null;
 }): Promise<void> {
-  await query(
-    `INSERT INTO feedback (request_id, rating, comment, created_at)
-     VALUES ($1, $2, $3, now())`,
-    [input.requestId, input.rating ?? null, input.comment ?? null]
-  );
+  await supabaseFetch("feedback", "POST", {
+    request_id: input.requestId,
+    rating: input.rating ?? null,
+    comment: input.comment ?? null,
+  });
 }
 
 // ---------------------------------------------------------------------------

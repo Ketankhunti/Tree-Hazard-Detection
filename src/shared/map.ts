@@ -51,6 +51,9 @@ export const BUNDLE_MAP = { width: 560, height: 360, padding: 44 } as const;
 /** Single-request locator in the detail sidebar. */
 export const LOCATION_MAP = { width: 420, height: 315, zoom: 17 } as const;
 
+/** Queue overview map: wide banner showing every open request across the city. */
+export const QUEUE_MAP = { width: 1280, height: 480, padding: 60 } as const;
+
 interface WorldPoint {
   /** Both in [0, 1]: fraction of the world, independent of zoom. */
   x: number;
