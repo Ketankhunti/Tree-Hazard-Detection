@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { TreePine, AlertTriangle, Eye, Clock } from "lucide-react";
-import { mockTrees } from "../data/mockTrees";
+import { TreePine, AlertTriangle, Eye, Clock, Loader2 } from "lucide-react";
+import { useComplaints } from "../hooks/useComplaints";
 import { scoreAllComplaints } from "../lib/scoringEngine";
 import { SummaryCard } from "../components/SummaryCard";
 import { ComplaintTable } from "../components/ComplaintTable";
@@ -9,17 +9,18 @@ import { FilterBar, type FilterState } from "../components/FilterBar";
 
 export function Dashboard() {
   const navigate = useNavigate();
+  const { complaints, loading, source } = useComplaints();
   const [filters, setFilters] = useState<FilterState>({
     neighborhood: "All",
     priority: "All",
     review: "All",
   });
 
-  const scored = useMemo(() => scoreAllComplaints(mockTrees), []);
+  const scored = useMemo(() => scoreAllComplaints(complaints), [complaints]);
 
   const neighborhoods = useMemo(
-    () => [...new Set(mockTrees.map((t) => t.neighborhood))].sort(),
-    []
+    () => [...new Set(complaints.map((t) => t.neighborhood))].sort(),
+    [complaints]
   );
 
   const filtered = useMemo(() => {
@@ -36,9 +37,9 @@ export function Dashboard() {
       (c) => c.priority === "Critical" || c.priority === "High"
     ).length;
     const needsReview = scored.filter((c) => c.reviewStatus === "Unsure").length;
-    const avgWait = Math.round(
-      scored.reduce((sum, c) => sum + c.daysWaiting, 0) / scored.length
-    );
+    const avgWait = scored.length > 0
+      ? Math.round(scored.reduce((sum, c) => sum + c.daysWaiting, 0) / scored.length)
+      : 0;
     return { total: scored.length, criticalHigh, needsReview, avgWait };
   }, [scored]);
 
@@ -53,8 +54,13 @@ export function Dashboard() {
               <p className="text-sm text-gray-500">Tree Hazard Prioritization</p>
             </div>
             <div className="flex items-center gap-2 text-sm text-gray-500">
-              <span className="inline-flex h-2 w-2 rounded-full bg-green-500" />
-              {stats.total} requests analyzed
+              <span className={`inline-flex h-2 w-2 rounded-full ${source === "backend" ? "bg-green-500" : "bg-amber-500"}`} />
+              {loading ? "Loading…" : `${stats.total} requests analyzed`}
+              {source && !loading && (
+                <span className="ml-1 text-xs text-gray-400">
+                  ({source === "backend" ? "live HRM data" : "demo data"})
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -62,6 +68,13 @@ export function Dashboard() {
 
       {/* Main Content */}
       <main className="mx-auto max-w-7xl space-y-6 px-6 py-6">
+        {loading ? (
+          <div className="flex flex-col items-center justify-center py-24">
+            <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+            <p className="mt-4 text-sm text-gray-500">Fetching live HRM tree data…</p>
+          </div>
+        ) : (
+          <>
         {/* Summary Cards */}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <SummaryCard title="Total Requests" value={stats.total} icon={TreePine} accentColor="text-blue-600" />
@@ -85,6 +98,8 @@ export function Dashboard() {
           <div className="rounded-lg border border-gray-200 bg-white p-12 text-center">
             <p className="text-gray-500">No complaints match the current filters.</p>
           </div>
+        )}
+          </>
         )}
       </main>
     </div>

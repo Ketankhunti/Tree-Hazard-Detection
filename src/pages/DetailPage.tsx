@@ -1,6 +1,7 @@
+import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, MapPin, Printer, Calendar, Clock, Camera, AlertTriangle, ShieldCheck, Eye } from "lucide-react";
-import { mockTrees } from "../data/mockTrees";
+import { ArrowLeft, MapPin, Printer, Calendar, Clock, Camera, AlertTriangle, ShieldCheck, Eye, Loader2, TreePine } from "lucide-react";
+import { fetchComplaintById, type BackendComplaint } from "../lib/api";
 import { scoreComplaint } from "../lib/scoringEngine";
 import { PriorityBadge, ReviewBadge } from "../components/PriorityBadge";
 import { AssessmentBreakdown } from "../components/AssessmentBreakdown";
@@ -10,8 +11,30 @@ import { HazardPoster } from "../components/HazardPoster";
 export function DetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const [complaint, setComplaint] = useState<BackendComplaint | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  const complaint = mockTrees.find((c) => c.id === id);
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    setLoading(true);
+    fetchComplaintById(id).then(({ complaint }) => {
+      if (!cancelled) {
+        setComplaint(complaint);
+        setLoading(false);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [id]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+      </div>
+    );
+  }
+
   if (!complaint) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -89,6 +112,62 @@ export function DetailPage() {
             <p className="text-lg font-bold text-gray-900">{complaint.daysWaiting}</p>
           </div>
         </div>
+
+        {/* HRM Tree Inventory Data (from backend) */}
+        {complaint.treeData && (
+          <div className="rounded-lg border border-green-200 bg-green-50 p-5">
+            <div className="flex items-center gap-2 mb-3">
+              <TreePine size={18} className="text-green-700" />
+              <h2 className="text-sm font-bold uppercase tracking-wide text-green-800">
+                HRM Tree Inventory Record
+              </h2>
+              <span className="ml-auto text-xs text-green-600">Live HRM Open Data</span>
+            </div>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+              <div>
+                <p className="text-xs text-green-600">Species</p>
+                <p className="text-sm font-semibold text-gray-900">{complaint.treeData.commonName}</p>
+                {complaint.treeData.scientificName && (
+                  <p className="text-xs italic text-gray-500">{complaint.treeData.scientificName}</p>
+                )}
+              </div>
+              <div>
+                <p className="text-xs text-green-600">Trunk Size (DBH)</p>
+                <p className="text-sm font-semibold text-gray-900">{complaint.treeData.dbhLabel}</p>
+              </div>
+              <div>
+                <p className="text-xs text-green-600">Overhead Wires</p>
+                <p className={`text-sm font-semibold ${complaint.treeData.wiresPresent ? "text-red-600" : "text-green-700"}`}>
+                  {complaint.treeData.wiresPresent ? "Yes ⚠" : "No"}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-green-600">Feature Type</p>
+                <p className="text-sm font-semibold text-gray-900">{complaint.treeData.featureLabel}</p>
+              </div>
+              <div>
+                <p className="text-xs text-green-600">Asset Status</p>
+                <p className="text-sm font-semibold text-gray-900">{complaint.treeData.statusLabel}</p>
+              </div>
+              <div>
+                <p className="text-xs text-green-600">Location Type</p>
+                <p className="text-sm font-semibold text-gray-900">
+                  {complaint.treeData.generalLocation === "ROW" ? "Right-of-Way" : complaint.treeData.generalLocation}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-green-600">Asset ID</p>
+                <p className="text-sm font-mono text-gray-700">{complaint.treeData.assetId}</p>
+              </div>
+              {complaint.treeData.yearPlanted && (
+                <div>
+                  <p className="text-xs text-green-600">Year Planted</p>
+                  <p className="text-sm font-semibold text-gray-900">{complaint.treeData.yearPlanted}</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           {/* Left Column */}

@@ -40,15 +40,16 @@ interface DangerRule {
 
 const DANGER_RULES: DangerRule[] = [
   { pattern: /leaning|significantly leaning/i, label: "Leaning Tree", points: 30 },
-  { pattern: /falling|fallen|uprooted|unstable/i, label: "Falling Risk", points: 25 },
+  { pattern: /falling|fallen|uprooted|unstable|could fall|fall on|falling branch/i, label: "Falling Risk", points: 25 },
   { pattern: /house|home|building|roof/i, label: "Property Threat", points: 20 },
   { pattern: /car|vehicle|driveway/i, label: "Vehicle Threat", points: 15 },
-  { pattern: /power line|electrical wire|utility line|power lines/i, label: "Power Line Threat", points: 15 },
-  { pattern: /trunk splitting|split trunk|cracked trunk|split in the trunk|splitting/i, label: "Split Trunk", points: 10 },
-  { pattern: /large dead branch|hanging branch|broken limb|dead branch|large limb|large branch/i, label: "Dead Branch", points: 10 },
-  { pattern: /storm damage|storm|wind storm/i, label: "Storm Damage", points: 10 },
+  { pattern: /power line|electrical wire|utility line|power lines|overhead wire|overhead utility wire|touching line/i, label: "Power Line Threat", points: 15 },
+  { pattern: /trunk splitting|split trunk|cracked trunk|split in the trunk|splitting|bark split|bark peeling/i, label: "Split Trunk", points: 10 },
+  { pattern: /large dead branch|hanging branch|broken limb|dead branch|large limb|large branch|deadwood|dead branches/i, label: "Dead Branch", points: 10 },
+  { pattern: /storm damage|storm|wind storm|in wind|in the next storm|during.*wind/i, label: "Storm Damage", points: 10 },
+  { pattern: /dead or dying|dead tree|dead for|completely bare|no foliage|no leaves/i, label: "Dead/Dying Tree", points: 20 },
   { pattern: /blocking road|blocking the road|across both lanes/i, label: "Road Obstruction", points: 5 },
-  { pattern: /blocking sidewalk|sidewalk/i, label: "Sidewalk Obstruction", points: 5 },
+  { pattern: /blocking sidewalk|sidewalk|tripping hazard|pedestrian/i, label: "Sidewalk Obstruction", points: 5 },
 ];
 
 // ===== Vague description detection =====
