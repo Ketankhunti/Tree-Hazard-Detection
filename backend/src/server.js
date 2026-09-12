@@ -27,6 +27,7 @@ import {
   getHalifaxTreeInventory,
 } from "./complaintGenerator.js";
 import { supabase } from "./supabaseClient.js";
+import { uploadImageToGCS } from "./cloudStorage.js";
 
 const PORT = process.env.PORT || 3001;
 const CORS_HEADERS = {
@@ -216,8 +217,8 @@ function parseMultipart(buffer, boundary) {
   return { fields, files };
 }
 
-// Create a new citizen complaint
-function createCitizenComplaint(fields, photoFiles) {
+// Create a new citizen complaint (uploads to Google Cloud Storage or local fallback)
+async function createCitizenComplaint(fields, photoFiles) {
   citizenCounter++;
   const id = `CIT-${String(citizenCounter).padStart(4, "0")}`;
   const now = new Date().toISOString();
@@ -231,7 +232,21 @@ function createCitizenComplaint(fields, photoFiles) {
     const savedName = fileList.length === 1 ? `${id}.${ext}` : `${id}_${i + 1}.${ext}`;
     const savePath = path.join(UPLOAD_DIR, savedName);
     fs.writeFileSync(savePath, f.data);
-    photoUrls.push(`/uploads/${savedName}`);
+
+    // Upload to Google Cloud Storage
+    let publicUrl = null;
+    try {
+      publicUrl = await uploadImageToGCS({
+        filename: `complaints/${savedName}`,
+        data: f.data,
+        contentType: f.contentType || "image/jpeg",
+      });
+    } catch (err) {
+      console.warn("GCS upload failed, falling back to local URL:", err.message);
+    }
+
+    // Store cloud URL if uploaded successfully, otherwise local URL
+    photoUrls.push(publicUrl || `/uploads/${savedName}`);
   }
 
   const complaint = {
@@ -333,10 +348,11 @@ const server = http.createServer(async (req, res) => {
       if (!fields.complaintText || fields.complaintText.trim().length < 10)
         return sendError(res, 400, "Complaint text must be at least 10 characters");
 
-      const complaint = createCitizenComplaint(fields, photoFile);
+      const complaint = await createCitizenComplaint(fields, photoFile);
 
       return sendJson(res, 201, {
         id: complaint.id,
+        photoUrl: complaint.photoUrl,
         message: "Complaint submitted successfully",
       });
     }

@@ -319,12 +319,25 @@ export function DetailPage() {
               <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-gray-700">
                 Field Photo & AI Analysis
               </h2>
-              <div className="flex h-40 items-center justify-center rounded border border-dashed border-gray-300 bg-gray-50">
-                <div className="text-center">
-                  <Camera size={32} className="mx-auto text-gray-300" />
-                  <p className="mt-2 text-sm text-gray-400">{complaint.photoUrl ?? "No photo submitted"}</p>
+              {complaint.photoUrl ? (
+                <div className="relative h-56 overflow-hidden rounded-lg border border-gray-200 bg-gray-900">
+                  <img
+                    src={complaint.photoUrl.startsWith("http") ? complaint.photoUrl : `http://localhost:3001${complaint.photoUrl}`}
+                    alt="Citizen field photo"
+                    className="h-full w-full object-contain"
+                  />
+                  <div className="absolute bottom-2 right-2 rounded bg-black/60 px-2 py-1 text-xs text-white">
+                    {complaint.photoUrl.startsWith("https://storage.googleapis.com") ? "☁ Google Cloud Storage" : "Uploaded Photo"}
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="flex h-40 items-center justify-center rounded border border-dashed border-gray-300 bg-gray-50">
+                  <div className="text-center">
+                    <Camera size={32} className="mx-auto text-gray-300" />
+                    <p className="mt-2 text-sm text-gray-400">No photo submitted</p>
+                  </div>
+                </div>
+              )}
               {scored.imageDetection && (
                 <div className="mt-4 space-y-3">
                   {/* Confidence indicator */}
