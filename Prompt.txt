@@ -1,32 +1,731 @@
-I am building a hackathon MVP in the next 4 hours. We are solving "Which Tree Falls First" for Halifax Urban Forestry. 
+You are an expert product designer, frontend engineer, and hackathon engineer.
 
-The problem: 290 tree requests are waiting. Every request needs a site visit. We need to triage them based on text descriptions to find the dangerous ones first.
+I am building a polished hackathon MVP in approximately 4 hours for the Halifax Urban Forestry problem:
 
-Please build a Next.js (App Router) + Tailwind CSS web application. 
+"Which Tree Falls First"
 
-Here are the exact requirements:
+Build the complete, fully functional web application. Do not ask me clarification questions. Make sensible implementation decisions when something is unspecified.
 
-1. MOCK DATA: Generate a realistic JSON array of 20 mock 311 tree requests in Halifax. Include: id, date, location (use real Halifax streets like Agricola St, Robie St, Quinpool Rd), description (make some sound highly dangerous like "leaning heavily over house after storm", some moderate like "branch touching power line", and some cosmetic like "needs trimming for aesthetics"), and a placeholder for photo_url.
+The goal is to create a government-style internal tool that helps Halifax Urban Forestry prioritize approximately 290 pending tree complaints.
 
-2. THE TRIAGE ENGINE (The Core Feature): 
-Create a function `triageRequest(description)` that uses the Anthropic SDK (claude-3-haiku-20240307 for speed/cost) to analyze the text. 
-The LLM prompt should ask Claude to return a strict JSON object: 
-{ "risk_score": 1-10, "priority": "HIGH" | "MEDIUM" | "LOW", "reasoning": "short string", "is_unsure": boolean }
-- HIGH: Imminent hazard, leaning on structure, power lines.
-- MEDIUM: Dead branches, minor power line issues.
-- LOW: Cosmetic, routine pruning.
-- is_unsure: true if the description is vague (e.g., "tree looks weird") and needs human review.
+IMPORTANT:
+This is a hackathon MVP. Prioritize:
+1. A polished working demo
+2. Clear and explainable prioritization
+3. Excellent UX
+4. Fast local execution
+5. No unnecessary infrastructure
 
-3. THE UI (Dashboard):
-- Top section: Summary cards (Total Requests, High Priority, Needs Human Review).
-- Main section: A sorted list/table of the requests, sorted by risk_score descending. 
-- Each row shows: Location, Description, Risk Score (color coded: Red for High, Yellow for Med, Green for Low), Priority, and a "Needs Review" badge if is_unsure is true.
-- Clicking a row expands it to show the full details and a placeholder image box.
+Do NOT build authentication, a database, a backend server, or complex deployment infrastructure unless absolutely necessary.
 
-4. TECH STACK & RULES:
-- Use Next.js 14 (App Router), Tailwind CSS, and shadcn/ui if possible for clean components.
-- Use the `@anthropic-ai/sdk` for the LLM calls. (I will provide the API key in .env.local).
-- Keep it in as few files as possible for speed. Put the mock data in a `data/mockTrees.ts` file.
-- Make the UI look like a professional internal government tool (clean, high contrast, data-dense).
+Use realistic mock data stored locally in the application.
 
-Please write the complete code for all necessary files. Start with the project structure, then the mock data, then the triage API route, and finally the frontend components.
+==================================================
+1. PRODUCT GOAL
+==================================================
+
+The application helps city arborists determine which tree complaints should receive an inspection first.
+
+The system should:
+
+- Read complaint descriptions
+- Identify potential hazards
+- Calculate an explainable priority score
+- Rank complaints from most urgent to least urgent
+- Highlight uncertain complaints requiring human review
+- Allow an arborist to inspect an individual complaint
+- Generate a printable Hazard Assessment Poster
+
+The system must NOT claim that a tree is definitely dangerous. It is a prioritization and triage tool for deciding which complaints should receive human inspection first.
+
+==================================================
+2. TECH STACK
+==================================================
+
+Use a modern frontend stack suitable for a hackathon.
+
+Preferred:
+
+- React
+- TypeScript
+- Vite
+- Tailwind CSS
+- Lucide icons
+
+Keep the application self-contained and runnable locally with:
+
+npm install
+npm run dev
+
+Do not require an external API key.
+
+The prioritization engine must run locally in the browser.
+
+Structure the scoring engine so that an actual LLM/API could replace the deterministic classifier in the future.
+
+==================================================
+3. MOCK DATA
+==================================================
+
+Generate 20 highly realistic fake tree complaints.
+
+Use real Halifax streets and neighborhoods.
+
+Examples of streets:
+
+- Quinpool Road
+- Agricola Street
+- Barrington Street
+- Robie Street
+- Gottingen Street
+- Spring Garden Road
+- Oxford Street
+- Young Street
+- Windsor Street
+- Almon Street
+- Brunswick Street
+- South Park Street
+- Chebucto Road
+- Dutch Village Road
+
+Use realistic Halifax neighborhoods.
+
+Each complaint must contain:
+
+- id
+- address
+- street
+- neighborhood
+- complaintText
+- daysWaiting
+- submittedDate
+- status
+- latitude
+- longitude
+
+The complaints should have varied severity.
+
+Include approximately:
+
+5 highly dangerous complaints
+5 high/moderate-risk complaints
+5 medium complaints
+3 low/cosmetic complaints
+2 vague/uncertain complaints
+
+Examples of dangerous descriptions:
+
+"Massive oak leaning approximately 45 degrees toward the house after last night's storm. The trunk appears to be splitting near the base and several large limbs are hanging over the roof."
+
+"Large tree has fallen partially onto the driveway. The remaining trunk is cracked and appears unstable."
+
+"Dead tree beside the sidewalk is leaning toward overhead power lines."
+
+Moderate:
+
+"Large dead branch hanging over the driveway. It has been there for several weeks and appears to be getting worse."
+
+"Large limb is cracked and hanging above the street."
+
+Cosmetic:
+
+"Tree looks ugly and needs trimming."
+
+"Leaves are blocking the sidewalk every fall."
+
+Vague:
+
+"Tree looks weird."
+
+"Something seems wrong with the tree behind my house."
+
+Make the waiting times varied, for example from 2 to 290 days.
+
+==================================================
+4. PRIORITIZATION ENGINE
+==================================================
+
+Implement a deterministic and explainable scoring system.
+
+Every component must produce a score from 0–100.
+
+FINAL SCORE:
+
+finalScore =
+    dangerScore * 0.50 +
+    waitScore * 0.25 +
+    locationScore * 0.15 +
+    reviewScore * 0.10
+
+Round finalScore to the nearest integer.
+
+--------------------------------------------------
+4A. DANGER SCORE — 50%
+--------------------------------------------------
+
+Analyze complaintText using keyword and phrase matching.
+
+Add points for hazards:
+
++30 leaning / significantly leaning
++25 falling / fallen / uprooted / unstable
++20 house / home / building / roof threatened
++15 car / vehicle / driveway threatened
++15 power line / electrical wire / utility line
++10 trunk splitting / split trunk / cracked trunk
++10 large dead branch / hanging branch / broken limb
++10 storm damage
++5 blocking road / street
++5 blocking sidewalk
+
+Cap dangerScore at 100.
+
+Also produce a list of the exact hazards detected.
+
+Example:
+
+complaint:
+"Tree is leaning toward my house and power line."
+
+Detected hazards:
+
+- Leaning tree
+- Property threat
+- Power line threat
+
+dangerScore should be high.
+
+--------------------------------------------------
+4B. WAIT TIME SCORE — 25%
+--------------------------------------------------
+
+Longer waiting complaints should receive higher scores.
+
+Normalize waiting time using:
+
+waitScore = min(daysWaiting / 180 * 100, 100)
+
+Therefore:
+
+0 days = 0
+90 days = 50
+180+ days = 100
+
+--------------------------------------------------
+4C. LOCATION IMPACT — 15%
+--------------------------------------------------
+
+Major/high-traffic Halifax streets should receive higher scores.
+
+Major streets:
+
+Barrington Street = 100
+Spring Garden Road = 100
+Quinpool Road = 90
+Robie Street = 90
+Gottingen Street = 85
+Oxford Street = 80
+Windsor Street = 80
+Almon Street = 80
+Chebucto Road = 75
+Dutch Village Road = 75
+
+Normal residential streets = 40
+
+Quiet/local side streets = 25
+
+Use the street associated with each complaint to determine locationScore.
+
+--------------------------------------------------
+4D. HUMAN REVIEW — 10%
+--------------------------------------------------
+
+The system must identify complaints where the description is vague or insufficient.
+
+Examples:
+
+"Tree looks weird."
+
+"Something seems wrong with the tree."
+
+"Tree needs attention."
+
+"Please check this tree."
+
+If a complaint is vague or contains insufficient information:
+
+reviewScore = 100
+reviewStatus = "Unsure"
+
+Otherwise:
+
+reviewScore = 0
+reviewStatus = "Reviewed"
+
+IMPORTANT:
+
+"Unsure" is NOT the same as "dangerous."
+
+It means the system lacks sufficient information and wants a human arborist to inspect/review it.
+
+==================================================
+5. PRIORITY LEVELS
+==================================================
+
+Use these exact thresholds:
+
+80–100 = Critical
+60–79 = High
+35–59 = Medium
+0–34 = Low
+
+Color coding:
+
+Critical = bright red
+High = orange
+Medium = yellow
+Low = gray
+
+Unsure = purple badge
+
+If a complaint is both high scoring and uncertain, display BOTH:
+
+Priority: High
+Review: Unsure
+
+Do not replace the priority with Unsure.
+
+==================================================
+6. AI REASONING
+==================================================
+
+For every complaint generate an explainable reasoning summary based on the detected factors.
+
+Example:
+
+"High priority because the description mentions a severely leaning tree, a split trunk, and a nearby house. The complaint has also been waiting 74 days. The location is on Quinpool Road, increasing the potential public impact."
+
+Show the individual score components:
+
+Danger: 92 / 100
+Wait Time: 41 / 100
+Location Impact: 90 / 100
+Human Review: 0 / 100
+
+Final Priority Score: 76
+
+The reasoning must be generated from the actual detected factors, not hardcoded independently of the scoring system.
+
+==================================================
+7. MAIN DASHBOARD
+==================================================
+
+Create a polished internal-government-style dashboard.
+
+Overall visual language:
+
+- white background
+- light gray panels
+- subtle borders
+- dark text
+- restrained use of color
+- professional typography
+- modern data-dense layout
+- responsive
+- no excessive gradients
+- no unnecessary animations
+
+Header:
+
+"Halifax Urban Forestry"
+
+Subtitle:
+
+"Tree Hazard Prioritization"
+
+Include a small status indicator:
+
+"20 requests analyzed"
+
+--------------------------------------------------
+SUMMARY CARDS
+--------------------------------------------------
+
+Create four large summary cards:
+
+1. Total Requests
+2. Critical / High Danger
+3. Needs Human Review
+4. Average Wait Time
+
+Use calculated values from the actual dataset.
+
+--------------------------------------------------
+QUEUE
+--------------------------------------------------
+
+Create a large sortable table.
+
+Columns:
+
+Rank
+Address
+Neighborhood
+Days Waiting
+Danger Score
+Priority
+Review
+Status
+
+Danger Score should use a horizontal visual progress bar.
+
+Sort by FINAL SCORE descending by default.
+
+Allow sorting by:
+
+- Final Score
+- Danger Score
+- Days Waiting
+- Address
+- Neighborhood
+
+Rows should have subtle hover states.
+
+Clicking a row opens the detail page.
+
+--------------------------------------------------
+FILTERS
+--------------------------------------------------
+
+Add filters for:
+
+Neighborhood
+Priority
+Review Status
+
+Include:
+
+All
+Critical
+High
+Medium
+Low
+
+And:
+
+All
+Unsure
+Reviewed
+
+Add a "Clear Filters" button.
+
+Display the number of currently visible complaints.
+
+==================================================
+8. DETAIL PAGE
+==================================================
+
+Clicking a complaint should open a dedicated detail view.
+
+Top navigation:
+
+Back to Queue
+
+Header:
+
+"Tree Hazard Assessment"
+
+Show:
+
+Address
+Neighborhood
+Priority
+Final Score
+Danger Score
+Days Waiting
+Review status
+
+--------------------------------------------------
+COMPLAINT
+--------------------------------------------------
+
+Display the complete original complaint prominently.
+
+--------------------------------------------------
+AI ASSESSMENT
+--------------------------------------------------
+
+Display:
+
+"Why this was prioritized"
+
+Then the reasoning.
+
+Also show the scoring breakdown:
+
+Danger
+Wait Time
+Location Impact
+Human Review
+
+Use visual bars.
+
+--------------------------------------------------
+HAZARDS DETECTED
+--------------------------------------------------
+
+Show hazard tags.
+
+Examples:
+
+Leaning
+Falling Risk
+Property Threat
+Power Line
+Dead Branch
+Storm Damage
+Road Obstruction
+
+If no specific hazards are detected:
+
+"No specific hazards detected from complaint text."
+
+--------------------------------------------------
+MAP / PHOTO
+--------------------------------------------------
+
+Create a polished placeholder panel representing the location/map.
+
+Do NOT require a real mapping API.
+
+Display:
+
+"Inspection Location"
+
+Use a simple stylized map placeholder with:
+
+- street grid
+- location pin
+- address
+
+Also include a placeholder inspection photo area:
+
+"Field photo unavailable"
+
+==================================================
+9. HAZARD ASSESSMENT POSTER
+==================================================
+
+The detail page must contain a separate printable poster section.
+
+Design it as a professional one-page letter-size government field assessment sheet.
+
+The poster must contain:
+
+MASSIVE RED HEADER:
+
+"URGENT TREE HAZARD ASSESSMENT"
+
+Then:
+
+ADDRESS
+
+in extremely large bold text.
+
+Show prominently:
+
+Priority Level
+Danger Score
+Final Priority Score
+Days Waiting
+
+Show:
+
+"HAZARDS IDENTIFIED"
+
+with bullet points.
+
+Show:
+
+"AI PRIORITIZATION REASONING"
+
+with the generated explanation.
+
+Show:
+
+"Assessment Date"
+
+Use the current date.
+
+Include a small footer:
+
+"Automated triage assessment — final determination requires qualified arborist inspection."
+
+This disclaimer is important.
+
+==================================================
+10. PRINT FUNCTIONALITY
+==================================================
+
+Add:
+
+"Print Poster"
+
+button.
+
+When clicked:
+
+window.print()
+
+Use CSS @media print.
+
+When printing:
+
+HIDE:
+
+- navigation
+- dashboard
+- sidebar
+- filters
+- buttons
+- map placeholder if appropriate
+- all other website content
+
+ONLY the Hazard Assessment Poster should print.
+
+Configure the print CSS for:
+
+US Letter / 8.5 × 11 inch paper
+portrait orientation
+appropriate margins
+professional spacing
+no clipped content
+
+The printed result should look like a real field assessment sheet.
+
+==================================================
+11. RESPONSIVENESS
+==================================================
+
+Desktop:
+
+Dashboard optimized for a large monitor.
+
+Tablet:
+
+Table remains usable.
+
+Mobile:
+
+Convert the table into responsive cards or allow horizontal scrolling.
+
+Detail page must remain readable on mobile.
+
+==================================================
+12. UX POLISH
+==================================================
+
+Include:
+
+- loading-free instant interactions
+- hover states
+- clear active filters
+- empty-state when filters produce no results
+- consistent spacing
+- accessible contrast
+- keyboard-friendly controls
+- clear buttons
+- back navigation
+
+Avoid:
+
+- excessive rounded cards
+- excessive shadows
+- excessive gradients
+- cartoonish illustrations
+- generic SaaS aesthetics
+
+This should feel like a serious municipal operations tool.
+
+==================================================
+13. DEMO REQUIREMENTS
+==================================================
+
+The application must work immediately after:
+
+npm install
+npm run dev
+
+There must be no login.
+
+There must be no API key.
+
+There must be no external backend dependency.
+
+All 20 complaints must be included automatically.
+
+The dashboard must immediately show the highest-priority tree at the top.
+
+The demo flow should be:
+
+1. Open dashboard
+2. See summary statistics
+3. See highest-risk tree at top
+4. Click tree
+5. See AI reasoning and detected hazards
+6. Click "Print Poster"
+7. Show the professional one-page hazard assessment
+
+==================================================
+14. CODE QUALITY
+==================================================
+
+Separate:
+
+- mock data
+- scoring engine
+- types/interfaces
+- components
+- pages
+- styling
+
+Create reusable components for:
+
+- PriorityBadge
+- ScoreBar
+- SummaryCard
+- ComplaintTable
+- FilterBar
+- HazardTag
+- AssessmentBreakdown
+- HazardPoster
+
+Do not duplicate scoring logic in components.
+
+The scoring engine should be independently testable.
+
+==================================================
+15. FINAL REQUIREMENT
+==================================================
+
+BUILD THE APPLICATION NOW.
+
+Do not just describe the implementation.
+
+Create all required files and code.
+
+Make sure the application actually runs.
+
+After implementation, verify:
+
+- sorting works
+- filtering works
+- detail navigation works
+- scoring works
+- hazards are detected
+- Unsure detection works
+- summary statistics are calculated dynamically
+- print mode hides the rest of the application
+- poster fits on one US Letter page
+
+If you encounter a minor implementation decision that was not specified, make the most sensible choice and continue rather than asking me a question.
