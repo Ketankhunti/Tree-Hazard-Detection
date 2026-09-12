@@ -1,23 +1,27 @@
 import { formatDistance } from "@/shared/geo";
+import {
+  BUNDLE_MAP,
+  fitViewport,
+  hasCoordinates,
+  metersPerPixel,
+  toPixel,
+} from "@/shared/map";
+import type { MapViewport, StaticMapImage } from "@/shared/map";
 import type { PriorityLevel, ScoredRequest } from "@/shared/types";
 
 /**
  * Operations map.
  *
  * Bundling is inherently spatial - a table cannot show why three jobs belong
- * together - but a real tile service would add a network dependency and an API
- * key to a tool that otherwise runs entirely offline. So this projects the
- * actual coordinates into an SVG instead: no tiles, no key, no requests.
+ * together. A Google Static Maps raster supplies the streets and the markers are
+ * drawn over it here, because the symbology is the point: priority colour,
+ * driving order, and which jobs are today versus a follow-up trip. Google's own
+ * marker parameters cannot express that.
  *
- * It is a relative-position plot, not a street map. That is the honest thing
- * to render given the gazetteer only knows street centroids anyway, and it
- * answers the only question being asked here: which of these jobs are close
- * enough to do together?
+ * `basemap` is null when no API key is configured. The map then degrades to the
+ * bare coordinate plot it used to be - still correctly scaled, just without
+ * streets underneath.
  */
-
-const VIEW_WIDTH = 560;
-const VIEW_HEIGHT = 360;
-const PADDING = 34;
 
 const PRIORITY_FILL: Record<PriorityLevel, string> = {
   Critical: "#dc2626",
@@ -26,257 +30,247 @@ const PRIORITY_FILL: Record<PriorityLevel, string> = {
   Low: "#94a3b8",
 };
 
-interface Placed {
-  request: ScoredRequest;
-  x: number;
-  y: number;
-}
-
-/**
- * Equirectangular projection with a cosine correction on longitude, so that a
- * metre east and a metre north occupy the same number of pixels. Without it,
- * Halifax renders horizontally stretched by about 30% and distances read wrong.
- */
-function project(
-  points: ScoredRequest[],
-  anchor: ScoredRequest
-): { placed: Placed[]; metersPerPixel: number } | null {
-  const located = points.filter(
-    (p): p is ScoredRequest & { latitude: number; longitude: number } =>
-      p.latitude !== null && p.longitude !== null
-  );
-  if (located.length === 0 || anchor.latitude === null) return null;
-
-  const cosLat = Math.cos((anchor.latitude * Math.PI) / 180);
-  const xs = located.map((p) => p.longitude * cosLat);
-  const ys = located.map((p) => p.latitude);
-
-  const minX = Math.min(...xs);
-  const maxX = Math.max(...xs);
-  const minY = Math.min(...ys);
-  const maxY = Math.max(...ys);
-
-  // Degenerate case: every point at the same spot.
-  const spanX = maxX - minX || 0.0008;
-  const spanY = maxY - minY || 0.0008;
-
-  const usableWidth = VIEW_WIDTH - PADDING * 2;
-  const usableHeight = VIEW_HEIGHT - PADDING * 2;
-
-  // One scale for both axes preserves shape.
-  const scale = Math.min(usableWidth / spanX, usableHeight / spanY);
-
-  const offsetX = (VIEW_WIDTH - spanX * scale) / 2;
-  const offsetY = (VIEW_HEIGHT - spanY * scale) / 2;
-
-  const placed = located.map((request) => ({
-    request,
-    x: offsetX + (request.longitude * cosLat - minX) * scale,
-    // SVG y grows downward; latitude grows north.
-    y: offsetY + (maxY - request.latitude) * scale,
-  }));
-
-  // 1 degree of latitude is ~111_320 m.
-  const metersPerPixel = 111_320 / scale;
-
-  return { placed, metersPerPixel };
-}
+/** Keeps a marker that is only just off-frame from being clipped mid-glyph. */
+const EDGE_MARGIN = 6;
 
 export function BundleMap({
   anchor,
   bundled,
   followUp,
   others,
+  basemap,
 }: {
   anchor: ScoredRequest;
   bundled: ScoredRequest[];
   /** Recommended but outside today's remaining hours. */
   followUp: ScoredRequest[];
   others: ScoredRequest[];
+  /** Signed Google basemap from the server, or null when unavailable. */
+  basemap: StaticMapImage | null;
 }) {
-  const bundledIds = new Set(bundled.map((r) => r.id));
-  const followUpIds = new Set(followUp.map((r) => r.id));
-  const all = [anchor, ...bundled, ...followUp, ...others];
-  const projection = project(all, anchor);
+  // The view is fitted to the plan, not to every open request in the city: a
+  // report across the harbour would zoom the cluster down to a single dot.
+  const planned = [anchor, ...bundled, ...followUp];
+  const viewport: MapViewport | null =
+    basemap?.viewport ?? fitViewport(planned, BUNDLE_MAP);
 
-  if (!projection) {
+  if (!viewport) {
     return (
       <div className="flex aspect-[14/9] items-center justify-center border border-slate-200 bg-slate-50">
-        <p className="text-sm text-slate-500">
-          No coordinates available to map.
-        </p>
+        <p className="text-sm text-slate-500">No coordinates available to map.</p>
       </div>
     );
   }
 
-  const { placed, metersPerPixel } = projection;
-  const byId = new Map(placed.map((p) => [p.request.id, p]));
-  const anchorPoint = byId.get(anchor.id);
+  const { width, height } = viewport;
+  const place = (request: ScoredRequest) =>
+    hasCoordinates(request) ? toPixel(viewport, request) : null;
 
-  // Scale bar: pick a round distance that lands near 100px.
-  const targetMeters = 100 * metersPerPixel;
-  const step = [100, 200, 250, 500, 1000, 2000].reduce((best, value) =>
-    Math.abs(value - targetMeters) < Math.abs(best - targetMeters) ? value : best
+  const inFrame = (point: { x: number; y: number }) =>
+    point.x >= -EDGE_MARGIN &&
+    point.x <= width + EDGE_MARGIN &&
+    point.y >= -EDGE_MARGIN &&
+    point.y <= height + EDGE_MARGIN;
+
+  const anchorPoint = place(anchor);
+  const bundledIds = new Set(bundled.map((r) => r.id));
+  const followUpIds = new Set(followUp.map((r) => r.id));
+
+  // Context pins, drawn only where they actually fall inside the fitted view.
+  const context = others.flatMap((request) => {
+    if (request.id === anchor.id) return [];
+    if (bundledIds.has(request.id) || followUpIds.has(request.id)) return [];
+    const point = place(request);
+    return point && inFrame(point) ? [{ request, point }] : [];
+  });
+
+  // Scale bar: round distance landing nearest 100px of the rendered image.
+  const resolution = metersPerPixel(viewport);
+  const step = [50, 100, 200, 250, 500, 1000, 2000].reduce((best, value) =>
+    Math.abs(value - 100 * resolution) < Math.abs(best - 100 * resolution)
+      ? value
+      : best
   );
-  const barPixels = step / metersPerPixel;
+  const barPixels = step / resolution;
 
   return (
     <figure className="border border-slate-200 bg-white">
-      <svg
-        viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
-        className="block w-full"
-        role="img"
-        aria-label={`Map of ${anchor.address} and ${bundled.length} nearby requests`}
+      <div
+        className="relative w-full overflow-hidden bg-slate-50"
+        style={{ aspectRatio: `${width} / ${height}` }}
       >
-        <rect width={VIEW_WIDTH} height={VIEW_HEIGHT} fill="#f8fafc" />
+        {basemap ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={basemap.src}
+            alt=""
+            aria-hidden
+            className="absolute inset-0 h-full w-full object-cover"
+          />
+        ) : null}
 
-        {/* Reference grid. Cosmetic - conveys scale, not streets. */}
-        <g stroke="#e2e8f0" strokeWidth="1">
-          {[0, 1, 2, 3, 4, 5].map((i) => (
-            <line
-              key={`h${i}`}
-              x1={0}
-              y1={(VIEW_HEIGHT / 5) * i}
-              x2={VIEW_WIDTH}
-              y2={(VIEW_HEIGHT / 5) * i}
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          className="absolute inset-0 h-full w-full"
+          role="img"
+          aria-label={`Map of ${anchor.address} and ${bundled.length} nearby requests`}
+        >
+          {/* Offline fallback backdrop: conveys scale, not streets. */}
+          {!basemap && (
+            <g stroke="#e2e8f0" strokeWidth="1">
+              <rect width={width} height={height} fill="#f8fafc" stroke="none" />
+              {[1, 2, 3, 4].map((i) => (
+                <line
+                  key={`h${i}`}
+                  x1={0}
+                  y1={(height / 5) * i}
+                  x2={width}
+                  y2={(height / 5) * i}
+                />
+              ))}
+              {[1, 2, 3, 4, 5, 6].map((i) => (
+                <line
+                  key={`v${i}`}
+                  x1={(width / 7) * i}
+                  y1={0}
+                  x2={(width / 7) * i}
+                  y2={height}
+                />
+              ))}
+            </g>
+          )}
+
+          {/* Routes from the anchor to each bundled job. */}
+          {anchorPoint &&
+            bundled.map((request) => {
+              const point = place(request);
+              if (!point) return null;
+              return (
+                <line
+                  key={`route-${request.id}`}
+                  x1={anchorPoint.x}
+                  y1={anchorPoint.y}
+                  x2={point.x}
+                  y2={point.y}
+                  stroke="#0f172a"
+                  strokeWidth="1.5"
+                  strokeDasharray="4 3"
+                  opacity="0.55"
+                />
+              );
+            })}
+
+          {/* Out-of-plan requests, faint. */}
+          {context.map(({ request, point }) => (
+            <circle
+              key={request.id}
+              cx={point.x}
+              cy={point.y}
+              r={4}
+              fill={PRIORITY_FILL[request.assessment.priority]}
+              stroke="#ffffff"
+              strokeWidth="1"
+              opacity="0.45"
             />
           ))}
-          {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
-            <line
-              key={`v${i}`}
-              x1={(VIEW_WIDTH / 7) * i}
-              y1={0}
-              x2={(VIEW_WIDTH / 7) * i}
-              y2={VIEW_HEIGHT}
-            />
-          ))}
-        </g>
 
-        {/* Routes from the anchor to each bundled job. */}
-        {anchorPoint &&
-          bundled.map((request) => {
-            const point = byId.get(request.id);
+          {/* Recommended but not scheduled today: hollow rings. */}
+          {followUp.map((request) => {
+            const point = place(request);
             if (!point) return null;
             return (
-              <line
-                key={`route-${request.id}`}
-                x1={anchorPoint.x}
-                y1={anchorPoint.y}
-                x2={point.x}
-                y2={point.y}
-                stroke="#0f172a"
-                strokeWidth="1.5"
-                strokeDasharray="4 3"
-                opacity="0.5"
+              <circle
+                key={`followup-${request.id}`}
+                cx={point.x}
+                cy={point.y}
+                r={7}
+                fill="#ffffff"
+                stroke={PRIORITY_FILL[request.assessment.priority]}
+                strokeWidth="2.5"
+                strokeDasharray="3 2"
               />
             );
           })}
 
-        {/* Out-of-plan requests, faint. */}
-        {placed
-          .filter(
-            (p) =>
-              p.request.id !== anchor.id &&
-              !bundledIds.has(p.request.id) &&
-              !followUpIds.has(p.request.id)
-          )
-          .map((p) => (
-            <circle
-              key={p.request.id}
-              cx={p.x}
-              cy={p.y}
-              r={4}
-              fill={PRIORITY_FILL[p.request.assessment.priority]}
-              opacity="0.28"
-            />
-          ))}
+          {/* Bundled jobs, numbered in driving order. */}
+          {bundled.map((request, index) => {
+            const point = place(request);
+            if (!point) return null;
+            return (
+              <g key={request.id}>
+                <circle
+                  cx={point.x}
+                  cy={point.y}
+                  r={9}
+                  fill={PRIORITY_FILL[request.assessment.priority]}
+                  stroke="#0f172a"
+                  strokeWidth="1.5"
+                />
+                <text
+                  x={point.x}
+                  y={point.y + 3.5}
+                  textAnchor="middle"
+                  fontSize="9"
+                  fontWeight="700"
+                  fill="#0f172a"
+                >
+                  {index + 1}
+                </text>
+              </g>
+            );
+          })}
 
-        {/* Recommended but not scheduled today: hollow rings. */}
-        {followUp.map((request) => {
-          const point = byId.get(request.id);
-          if (!point) return null;
-          return (
-            <circle
-              key={`followup-${request.id}`}
-              cx={point.x}
-              cy={point.y}
-              r={7}
-              fill="#ffffff"
-              stroke={PRIORITY_FILL[request.assessment.priority]}
-              strokeWidth="2.5"
-              strokeDasharray="3 2"
-            />
-          );
-        })}
-
-        {/* Bundled jobs. */}
-        {bundled.map((request, index) => {
-          const point = byId.get(request.id);
-          if (!point) return null;
-          return (
-            <g key={request.id}>
+          {/* Anchor, drawn last so it sits on top. */}
+          {anchorPoint && (
+            <g>
               <circle
-                cx={point.x}
-                cy={point.y}
-                r={9}
-                fill={PRIORITY_FILL[request.assessment.priority]}
-                stroke="#0f172a"
+                cx={anchorPoint.x}
+                cy={anchorPoint.y}
+                r={15}
+                fill="none"
+                stroke="#dc2626"
                 strokeWidth="1.5"
+                opacity="0.55"
               />
-              <text
-                x={point.x}
-                y={point.y + 3.5}
-                textAnchor="middle"
-                fontSize="9"
-                fontWeight="700"
-                fill="#0f172a"
-              >
-                {index + 1}
-              </text>
+              <circle
+                cx={anchorPoint.x}
+                cy={anchorPoint.y}
+                r={8}
+                fill="#dc2626"
+                stroke="#ffffff"
+                strokeWidth="2.5"
+              />
             </g>
-          );
-        })}
+          )}
 
-        {/* Anchor, drawn last so it sits on top. */}
-        {anchorPoint && (
-          <g>
-            <circle
-              cx={anchorPoint.x}
-              cy={anchorPoint.y}
-              r={15}
-              fill="none"
-              stroke="#dc2626"
-              strokeWidth="1.5"
-              opacity="0.45"
+          {/* Scale bar, top-left: Google's logo and attribution own the bottom
+              edge of the raster and must not be covered. */}
+          <g transform={`translate(16, 22)`}>
+            <rect
+              x={-8}
+              y={-11}
+              width={barPixels + 58}
+              height={21}
+              fill="#ffffff"
+              stroke="#cbd5e1"
+              strokeWidth="1"
             />
-            <circle
-              cx={anchorPoint.x}
-              cy={anchorPoint.y}
-              r={8}
-              fill="#dc2626"
-              stroke="#ffffff"
-              strokeWidth="2.5"
+            <line x1={0} y1={0} x2={barPixels} y2={0} stroke="#475569" strokeWidth="2" />
+            <line x1={0} y1={-4} x2={0} y2={4} stroke="#475569" strokeWidth="2" />
+            <line
+              x1={barPixels}
+              y1={-4}
+              x2={barPixels}
+              y2={4}
+              stroke="#475569"
+              strokeWidth="2"
             />
+            <text x={barPixels + 7} y={4} fontSize="11" fill="#475569">
+              {formatDistance(step)}
+            </text>
           </g>
-        )}
-
-        {/* Scale bar. */}
-        <g transform={`translate(${PADDING}, ${VIEW_HEIGHT - 18})`}>
-          <line x1={0} y1={0} x2={barPixels} y2={0} stroke="#475569" strokeWidth="2" />
-          <line x1={0} y1={-4} x2={0} y2={4} stroke="#475569" strokeWidth="2" />
-          <line
-            x1={barPixels}
-            y1={-4}
-            x2={barPixels}
-            y2={4}
-            stroke="#475569"
-            strokeWidth="2"
-          />
-          <text x={barPixels + 7} y={4} fontSize="11" fill="#475569">
-            {formatDistance(step)}
-          </text>
-        </g>
-      </svg>
+        </svg>
+      </div>
 
       <figcaption className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-slate-200 px-3 py-2 text-[11px] text-slate-600">
         <span className="flex items-center gap-1.5">
@@ -296,7 +290,9 @@ export function BundleMap({
           Other open requests
         </span>
         <span className="ml-auto text-slate-400">
-          Relative positions, not a street map
+          {basemap
+            ? "Pins are triage positions, not survey points"
+            : "Relative positions, not a street map"}
         </span>
       </figcaption>
     </figure>

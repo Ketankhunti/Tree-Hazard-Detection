@@ -320,26 +320,31 @@ export async function resolveLocation(input: {
   }
 
   // 2. Live geocoder, when one is configured.
+  //
+  // An APPROXIMATE result is a locality centroid, not a location: every address
+  // Google cannot recognise in Halifax comes back as the same downtown point.
+  // Accepting those would stack unrelated reports inside the 90 m duplicate
+  // radius and merge them into one tree, so they are discarded in favour of a
+  // street centroid or an honest blank.
   const remote = await geocodeRemote(input.address);
-  if (remote) {
-    const imprecise = remote.precision === "approximate";
+  const located = remote && remote.precision !== "approximate" ? remote : null;
+
+  if (located) {
     return {
       street,
       neighborhood,
-      latitude: remote.latitude,
-      longitude: remote.longitude,
+      latitude: located.latitude,
+      longitude: located.longitude,
       source: "geocoded",
-      precision: remote.precision,
+      precision: located.precision,
       note:
         "Geocoded by " +
-        remote.provider +
+        located.provider +
         " to " +
-        PRECISION_LABEL[remote.precision] +
+        PRECISION_LABEL[located.precision] +
         " accuracy" +
-        (remote.formattedAddress ? " (" + remote.formattedAddress + ")" : "") +
-        (imprecise
-          ? ". Too coarse to distinguish neighbouring trees - confirm the pin before dispatch."
-          : "."),
+        (located.formattedAddress ? " (" + located.formattedAddress + ")" : "") +
+        ".",
     };
   }
 
@@ -364,6 +369,10 @@ export async function resolveLocation(input: {
     longitude: null,
     source: "manual",
     precision: null,
-    note: "Address did not match a known Halifax street and geocoding returned nothing. Needs a manual map pin before it can be bundled with nearby work.",
+    note: remote
+      ? `Address did not match a known Halifax street, and ${remote.provider} could only place it at the municipality level` +
+        (remote.formattedAddress ? ` (${remote.formattedAddress})` : "") +
+        ". Needs a manual map pin before it can be bundled with nearby work."
+      : "Address did not match a known Halifax street and geocoding returned nothing. Needs a manual map pin before it can be bundled with nearby work.",
   };
 }

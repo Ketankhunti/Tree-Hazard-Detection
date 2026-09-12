@@ -11,6 +11,7 @@ import {
   listOpenRequests,
 } from "@/backend/db/repository";
 import { buildBundlePlan } from "@/backend/domain/bundling";
+import { bundleMapImage, locationMapImage } from "@/backend/services/staticmap";
 import { OPEN_STATUSES } from "@/shared/types";
 
 export const dynamic = "force-dynamic";
@@ -45,6 +46,12 @@ export default async function RequestDetailPage({
     (item) => item.id !== request.id && !bundledIds.has(item.id)
   );
 
+  // Basemap URLs are signed here because the API key is server-only.
+  const locationMap = locationMapImage(request);
+  const bundleMap = plan
+    ? bundleMapImage([plan.anchor, ...plan.recommended.map((c) => c.request)])
+    : null;
+
   return (
     <div className="min-h-screen bg-white">
       <AppHeader />
@@ -58,6 +65,8 @@ export default async function RequestDetailPage({
         otherOpen={otherOpen}
         queueRank={rankById.get(request.id) ?? null}
         ranks={Object.fromEntries(rankById)}
+        locationMap={locationMap}
+        bundleMap={bundleMap}
       />
     </div>
   );

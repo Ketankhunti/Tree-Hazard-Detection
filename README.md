@@ -30,12 +30,13 @@ variable. Two things will bite you, so `npm run db:check` tests for both:
 - **Do not append `?sslmode=require`.** pg >= 8.23 treats it as `verify-full`,
   which rejects Supabase's certificate chain. TLS is enabled by the app itself.
 
-- `/report` — public submission form (no login)
-- `/admin` — inspection queue
+- `/` — public submission form (no login)
+- `/admin` — inspection queue, **behind a staff sign-in** (`admin` / `admin` by
+  default; see `ADMIN_USERNAME` / `ADMIN_PASSWORD`)
 - `/admin/requests/[id]` — full assessment and printable poster
 
 No API key is required. Photo analysis is skipped when one is absent and the
-app falls back to text-only triage.
+app falls back to text-only triage; maps fall back to a coordinate plot.
 
 ```bash
 npm run build      # production build
@@ -51,7 +52,13 @@ Everything is optional — copy `.env.example` to `.env.local` to change any of 
 |---|---|---|
 | `ANTHROPIC_API_KEY` | unset | Enables photo analysis. Without it, text-only. |
 | `VISION_MODEL` | `claude-opus-5` | Model used to assess photos. |
-| `GEOCODER_URL` | unset | Opt-in live geocoding. Off by default so a demo never depends on a third-party service. |
+| `GOOGLE_MAPS_API_KEY` | unset | Geocoding API + Maps Static API. Without it: local gazetteer and a coordinate plot instead of street maps. Server-side only. |
+| `MAP_PROXY_SECRET` | the API key | Signs `/api/map` URLs so the basemap proxy is not free image hosting. |
+| `GEOCODER_URL` | unset | Legacy Nominatim fallback, used only when no Google key is set. |
+| `ADMIN_USERNAME` | `admin` | Staff sign-in for `/admin`. |
+| `ADMIN_PASSWORD` | `admin` | Change this for anything reachable from a network. |
+| `ADMIN_SESSION_SECRET` | `DATABASE_URL` | Signs the session cookie; setting it invalidates every session. |
+| `ADMIN_SESSION_HOURS` | `12` | Session lifetime — one shift. |
 | `DATABASE_URL` | — | **Required.** Supabase Postgres connection string. |
 | `DATABASE_SSL_STRICT` | `false` | Verify Supabase's TLS certificate chain. |
 | `DATABASE_POOL_MAX` | `10` | Pooled connections held by this process. |
@@ -71,16 +78,18 @@ src/
     domain/scoring.ts       hazard rules, classification, fusion, escalation
     domain/bundling.ts      same-day work planner
     domain/duplicates.ts    same-tree detection
-    services/               intake, vision, geocode, exif, storage
+    services/               intake, vision, geocode, staticmap, auth, exif, storage
     seed/                   engineered demo dataset + seeder
   shared/                   pure data and helpers, safe in both bundles
     types.ts                domain types, incl. server -> client prop shapes
     scoring-config.ts       WEIGHTS and priority bands - the displayed contract
     geo.ts                  distance maths
+    map.ts                  Web Mercator projection for the basemap overlay
   frontend/
     components/
     styles/globals.css
   app/                      Next.js routing only; pages compose, not compute
+  middleware.ts             the /admin gate (covers pages and server actions)
 ```
 
 `WEIGHTS` and the plan types sit in `shared` because the UI prints them — one
@@ -193,8 +202,11 @@ suggestion for a human.
 ### Location resolution
 
 1. **EXIF GPS** from the photo — the phone was actually there
-2. **Local Halifax gazetteer** — offline, street-centroid accuracy
-3. **Live geocoder** — opt-in via `GEOCODER_URL`
+2. **Google Geocoding API** — house-number accuracy, and it reports its own
+   precision. A locality-centroid (`APPROXIMATE`) result is *discarded*: every
+   unrecognised address resolves to the same downtown point, which would stack
+   unrelated reports inside the 90 m duplicate radius and merge them into one tree
+3. **Local Halifax gazetteer** — offline, street-centroid accuracy
 4. **Nothing** — stored anyway, flagged for a manual pin, excluded from distance maths
 
 ## Swapping the classifier
