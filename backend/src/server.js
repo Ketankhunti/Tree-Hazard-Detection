@@ -154,60 +154,76 @@ function readBody(req) {
   });
 }
 
-// Parse multipart/form-data (zero-dependency)
+// Parse multipart/form-data (zero-dependency, Buffer-safe)
 function parseMultipart(buffer, boundary) {
   const fields = {};
-  const files = {};
-  const parts = buffer.split(Buffer.from(`--${boundary}`));
+  const files = {}; // name → array of { filename, data, contentType }
+  const delim = Buffer.from(`--${boundary}`);
+  let pos = 0;
 
-  for (const part of parts) {
-    if (part.length === 0 || part.toString().trim() === "--" || part.toString().trim() === "--\r\n") continue;
+  while (pos < buffer.length) {
+    const start = buffer.indexOf(delim, pos);
+    if (start === -1) break;
+    const partStart = start + delim.length;
+    // Check for closing boundary --
+    if (buffer[partStart] === 0x2d && buffer[partStart + 1] === 0x2d) break; // --
+    // Skip CRLF after boundary
+    const dataStart = partStart + 2; // skip \r\n
+    const nextDelim = buffer.indexOf(delim, dataStart);
+    if (nextDelim === -1) break;
+    // Part content is between dataStart and nextDelim, minus trailing \r\n
+    let partEnd = nextDelim;
+    if (partEnd >= 2 && buffer[partEnd - 2] === 0x0d && buffer[partEnd - 1] === 0x0a) {
+      partEnd -= 2; // strip trailing \r\n
+    }
+    const partBuf = buffer.subarray(dataStart, partEnd);
+    if (partBuf.length === 0) { pos = nextDelim; continue; }
 
-    // Remove leading \r\n and trailing \r\n
-    const trimmed = part.slice(2, part.length - 2);
-    if (trimmed.length === 0) continue;
+    // Find header/body separator (\r\n\r\n)
+    const sep = partBuf.indexOf("\r\n\r\n");
+    if (sep === -1) { pos = nextDelim; continue; }
 
-    // Find header/body separator
-    const sep = trimmed.indexOf("\r\n\r\n");
-    if (sep === -1) continue;
+    const headerText = partBuf.subarray(0, sep).toString();
+    const body = partBuf.subarray(sep + 4);
 
-    const headerText = trimmed.slice(0, sep).toString();
-    const body = trimmed.slice(sep + 4);
-
-    // Parse Content-Disposition
     const nameMatch = headerText.match(/name="([^"]+)"/);
-    if (!nameMatch) continue;
+    if (!nameMatch) { pos = nextDelim; continue; }
     const name = nameMatch[1];
 
     const filenameMatch = headerText.match(/filename="([^"]*)"/);
     if (filenameMatch) {
-      // It's a file
       const filename = filenameMatch[1];
       if (filename && body.length > 0) {
-        files[name] = { filename, data: body, contentType: headerText.match(/Content-Type:\s*(\S+)/)?.[1] || "application/octet-stream" };
+        const fileEntry = { filename, data: body, contentType: headerText.match(/Content-Type:\s*(\S+)/)?.[1] || "application/octet-stream" };
+        if (!files[name]) files[name] = [];
+        files[name].push(fileEntry);
       }
     } else {
-      // It's a text field
       fields[name] = body.toString().trim();
     }
+
+    pos = nextDelim;
   }
 
   return { fields, files };
 }
 
 // Create a new citizen complaint
-function createCitizenComplaint(fields, photoFile) {
+function createCitizenComplaint(fields, photoFiles) {
   citizenCounter++;
   const id = `CIT-${String(citizenCounter).padStart(4, "0")}`;
   const now = new Date().toISOString();
 
-  let photoUrl = null;
-  if (photoFile) {
-    const ext = photoFile.filename.match(/\.(\w+)$/)?.[1] || "jpg";
-    const savedName = `${id}.${ext}`;
+  // Support multiple photos — photoFiles is an array (or null)
+  const photoUrls = [];
+  const fileList = Array.isArray(photoFiles) ? photoFiles : (photoFiles ? [photoFiles] : []);
+  for (let i = 0; i < fileList.length; i++) {
+    const f = fileList[i];
+    const ext = f.filename.match(/\.(\w+)$/)?.[1] || "jpg";
+    const savedName = fileList.length === 1 ? `${id}.${ext}` : `${id}_${i + 1}.${ext}`;
     const savePath = path.join(UPLOAD_DIR, savedName);
-    fs.writeFileSync(savePath, photoFile.data);
-    photoUrl = `/uploads/${savedName}`;
+    fs.writeFileSync(savePath, f.data);
+    photoUrls.push(`/uploads/${savedName}`);
   }
 
   const complaint = {
@@ -221,7 +237,8 @@ function createCitizenComplaint(fields, photoFile) {
     status: "Pending",
     latitude: parseFloat(fields.latitude) || 44.6488,
     longitude: parseFloat(fields.longitude) || -63.5752,
-    photoUrl,
+    photoUrl: photoUrls.length > 0 ? photoUrls[0] : null,
+    photoUrls: photoUrls.length > 0 ? photoUrls : undefined,
     source: "citizen",
   };
 
@@ -292,7 +309,7 @@ const server = http.createServer(async (req, res) => {
         if (!boundary) return sendError(res, 400, "Missing multipart boundary");
         const parsed = parseMultipart(body, boundary);
         fields = parsed.fields;
-        photoFile = parsed.files.photo || null;
+        photoFile = parsed.files.photos || parsed.files.photo || null;
       } else {
         try {
           fields = JSON.parse(body.toString());

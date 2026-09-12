@@ -33,7 +33,6 @@ interface FormData {
   complaintText: string;
   latitude: string;
   longitude: string;
-  photo: File | null;
 }
 
 export function SubmitComplaint() {
@@ -44,9 +43,9 @@ export function SubmitComplaint() {
     complaintText: "",
     latitude: "",
     longitude: "",
-    photo: null,
   });
-  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [photos, setPhotos] = useState<File[]>([]);
+  const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
@@ -57,20 +56,19 @@ export function SubmitComplaint() {
   }
 
   function handlePhotoChange(e: ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0] ?? null;
-    setFormData((prev) => ({ ...prev, photo: file }));
-    if (file) {
+    const files = Array.from(e.target.files ?? []);
+    if (files.length === 0) return;
+    setPhotos((prev) => [...prev, ...files]);
+    for (const file of files) {
       const reader = new FileReader();
-      reader.onload = () => setPhotoPreview(reader.result as string);
+      reader.onload = () => setPhotoPreviews((prev) => [...prev, reader.result as string]);
       reader.readAsDataURL(file);
-    } else {
-      setPhotoPreview(null);
     }
   }
 
-  function removePhoto() {
-    setFormData((prev) => ({ ...prev, photo: null }));
-    setPhotoPreview(null);
+  function removePhoto(index: number) {
+    setPhotos((prev) => prev.filter((_, i) => i !== index));
+    setPhotoPreviews((prev) => prev.filter((_, i) => i !== index));
   }
 
   async function useMyLocation() {
@@ -114,7 +112,7 @@ export function SubmitComplaint() {
         complaintText: formData.complaintText,
         latitude: formData.latitude ? parseFloat(formData.latitude) : 44.6488,
         longitude: formData.longitude ? parseFloat(formData.longitude) : -63.5752,
-        photo: formData.photo,
+        photos,
       });
       setSubmittedId(result.id);
       setSuccess(true);
@@ -156,9 +154,9 @@ export function SubmitComplaint() {
                   complaintText: "",
                   latitude: "",
                   longitude: "",
-                  photo: null,
                 });
-                setPhotoPreview(null);
+                setPhotos([]);
+                setPhotoPreviews([]);
               }}
             >
               Submit Another Report
@@ -291,34 +289,40 @@ export function SubmitComplaint() {
           {/* Photo Section */}
           <div className="rounded-lg border border-gray-200 bg-white p-5">
             <h2 className="mb-4 flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-gray-700">
-              <Camera size={16} /> Field Photo
+              <Camera size={16} /> Field Photos ({photos.length})
             </h2>
-            {photoPreview ? (
-              <div className="relative">
-                <img src={photoPreview} alt="Preview" className="w-full max-h-64 object-contain rounded border border-gray-200" />
-                <button
-                  type="button"
-                  onClick={removePhoto}
-                  className="absolute top-2 right-2 rounded-full bg-black/60 p-1.5 text-white hover:bg-black/80"
-                >
-                  <X size={16} />
-                </button>
+            {photoPreviews.length > 0 && (
+              <div className="mb-3 grid grid-cols-3 gap-3">
+                {photoPreviews.map((preview, i) => (
+                  <div key={i} className="relative">
+                    <img src={preview} alt={`Preview ${i + 1}`} className="h-28 w-full rounded border border-gray-200 object-cover" />
+                    <button
+                      type="button"
+                      onClick={() => removePhoto(i)}
+                      className="absolute top-1 right-1 rounded-full bg-black/60 p-1 text-white hover:bg-black/80"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                ))}
               </div>
-            ) : (
-              <label className="flex h-40 cursor-pointer flex-col items-center justify-center rounded border-2 border-dashed border-gray-300 bg-gray-50 hover:border-green-400 hover:bg-green-50">
-                <Camera size={32} className="text-gray-300" />
-                <p className="mt-2 text-sm text-gray-500">Click to upload a photo</p>
-                <p className="text-xs text-gray-400">JPG, PNG up to 10MB</p>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handlePhotoChange}
-                  className="hidden"
-                />
-              </label>
             )}
+            <label className="flex h-32 cursor-pointer flex-col items-center justify-center rounded border-2 border-dashed border-gray-300 bg-gray-50 hover:border-green-400 hover:bg-green-50">
+              <Camera size={28} className="text-gray-300" />
+              <p className="mt-2 text-sm text-gray-500">
+                {photos.length > 0 ? "Add more photos" : "Click to upload photos"}
+              </p>
+              <p className="text-xs text-gray-400">JPG, PNG up to 10MB each</p>
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={handlePhotoChange}
+                className="hidden"
+              />
+            </label>
             <p className="mt-2 text-xs text-gray-400">
-              A photo helps the AI verify the hazard and prevents exaggerated descriptions. The image is cross-referenced with your text description.
+              Upload multiple photos from different angles. The AI cross-references images with your text description to verify the hazard.
             </p>
           </div>
 

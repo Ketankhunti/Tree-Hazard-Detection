@@ -116,7 +116,7 @@ export async function fetch311Calls(): Promise<Tree311Call[]> {
 
 /**
  * Submit a new tree hazard complaint from the citizen portal.
- * Sends multipart/form-data if a photo is included, JSON otherwise.
+ * Sends multipart/form-data if photos are included, JSON otherwise.
  */
 export async function submitComplaint(input: {
   address: string;
@@ -124,18 +124,20 @@ export async function submitComplaint(input: {
   complaintText: string;
   latitude: number;
   longitude: number;
-  photo: File | null;
+  photos: File[];
 }): Promise<{ id: string; message: string }> {
-  const hasPhoto = input.photo !== null;
+  const hasPhotos = input.photos.length > 0;
 
-  if (hasPhoto && input.photo) {
+  if (hasPhotos) {
     const formData = new FormData();
     formData.append("address", input.address);
     formData.append("neighborhood", input.neighborhood);
     formData.append("complaintText", input.complaintText);
     formData.append("latitude", String(input.latitude));
     formData.append("longitude", String(input.longitude));
-    formData.append("photo", input.photo);
+    for (const photo of input.photos) {
+      formData.append("photos", photo);
+    }
 
     const res = await fetch(`${API_BASE}/complaints`, {
       method: "POST",

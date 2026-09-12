@@ -15,6 +15,7 @@ export interface TreeComplaint {
   latitude: number;
   longitude: number;
   photoUrl?: string;
+  photoUrls?: string[]; // multiple citizen photos
 }
 
 export interface Hazard {
