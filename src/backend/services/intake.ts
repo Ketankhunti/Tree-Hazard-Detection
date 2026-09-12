@@ -8,7 +8,7 @@ import {
   pickAutoLink,
   type DuplicateCandidate,
 } from "@/backend/domain/duplicates";
-import { config, hasLLM } from "@/backend/config";
+import { hasLLM } from "@/backend/config";
 import { extractGps } from "@/backend/services/exif";
 import { resolveLocation } from "@/backend/services/geocode";
 import {
