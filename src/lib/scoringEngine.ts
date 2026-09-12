@@ -185,8 +185,7 @@ function calculateImageDangerScore(detection: ImageDetectionResult | undefined):
 function calculateCombinedDangerScore(
   textResult: { score: number; hazards: Hazard[] },
   imageResult: { score: number; hazards: Hazard[] },
-  imageDetection: ImageDetectionResult | undefined,
-  complaintText: string
+  imageDetection: ImageDetectionResult | undefined
 ): {
   score: number;
   hazards: Hazard[];
@@ -346,8 +345,7 @@ export function scoreComplaint(complaint: TreeComplaint): ScoredComplaint {
   const { score: dangerScore, hazards, textImageConflict } = calculateCombinedDangerScore(
     textResult,
     imageResult,
-    imageDetection,
-    complaint.complaintText
+    imageDetection
   );
 
   const waitScore = calculateWaitScore(complaint.daysWaiting);

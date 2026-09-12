@@ -10,6 +10,26 @@ interface ComplaintTableProps {
   onRowClick: (id: string) => void;
 }
 
+function SortIcon({
+  col,
+  sortKey,
+  sortDir,
+}: {
+  col: SortKey;
+  sortKey: SortKey;
+  sortDir: "asc" | "desc";
+}) {
+  if (col !== sortKey) return <span className="inline-block w-3" />;
+  return sortDir === "desc" ? <ChevronDown size={14} /> : <ChevronUp size={14} />;
+}
+
+function dangerBarColor(score: number): string {
+  if (score >= 70) return "bg-red-500";
+  if (score >= 40) return "bg-orange-400";
+  if (score >= 20) return "bg-yellow-400";
+  return "bg-gray-300";
+}
+
 export function ComplaintTable({ complaints, onRowClick }: ComplaintTableProps) {
   const [sortKey, setSortKey] = useState<SortKey>("finalScore");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
@@ -45,18 +65,6 @@ export function ComplaintTable({ complaints, onRowClick }: ComplaintTableProps) 
     return sortDir === "desc" ? -cmp : cmp;
   });
 
-  const SortIcon = ({ col }: { col: SortKey }) => {
-    if (col !== sortKey) return <span className="inline-block w-3" />;
-    return sortDir === "desc" ? <ChevronDown size={14} /> : <ChevronUp size={14} />;
-  };
-
-  const dangerBarColor = (score: number) => {
-    if (score >= 70) return "bg-red-500";
-    if (score >= 40) return "bg-orange-400";
-    if (score >= 20) return "bg-yellow-400";
-    return "bg-gray-300";
-  };
-
   return (
     <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
       <table className="w-full text-sm">
@@ -67,31 +75,31 @@ export function ComplaintTable({ complaints, onRowClick }: ComplaintTableProps) 
               className="cursor-pointer px-3 py-3 hover:text-gray-700"
               onClick={() => handleSort("address")}
             >
-              <span className="inline-flex items-center gap-1">Address <SortIcon col="address" /></span>
+              <span className="inline-flex items-center gap-1">Address <SortIcon col="address" sortKey={sortKey} sortDir={sortDir} /></span>
             </th>
             <th
               className="cursor-pointer px-3 py-3 hover:text-gray-700"
               onClick={() => handleSort("neighborhood")}
             >
-              <span className="inline-flex items-center gap-1">Neighborhood <SortIcon col="neighborhood" /></span>
+              <span className="inline-flex items-center gap-1">Neighborhood <SortIcon col="neighborhood" sortKey={sortKey} sortDir={sortDir} /></span>
             </th>
             <th
               className="cursor-pointer px-3 py-3 hover:text-gray-700"
               onClick={() => handleSort("daysWaiting")}
             >
-              <span className="inline-flex items-center gap-1">Days Waiting <SortIcon col="daysWaiting" /></span>
+              <span className="inline-flex items-center gap-1">Days Waiting <SortIcon col="daysWaiting" sortKey={sortKey} sortDir={sortDir} /></span>
             </th>
             <th
               className="cursor-pointer px-3 py-3 hover:text-gray-700"
               onClick={() => handleSort("dangerScore")}
             >
-              <span className="inline-flex items-center gap-1">Danger Score <SortIcon col="dangerScore" /></span>
+              <span className="inline-flex items-center gap-1">Danger Score <SortIcon col="dangerScore" sortKey={sortKey} sortDir={sortDir} /></span>
             </th>
             <th
               className="cursor-pointer px-3 py-3 hover:text-gray-700"
               onClick={() => handleSort("finalScore")}
             >
-              <span className="inline-flex items-center gap-1">Priority <SortIcon col="finalScore" /></span>
+              <span className="inline-flex items-center gap-1">Priority <SortIcon col="finalScore" sortKey={sortKey} sortDir={sortDir} /></span>
             </th>
             <th className="px-3 py-3">Review</th>
             <th className="px-3 py-3">Status</th>

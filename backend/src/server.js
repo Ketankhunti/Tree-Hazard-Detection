@@ -62,6 +62,8 @@ function rowToComplaint(row) {
 
 /** Fetch all citizen complaints from Supabase (newest first) */
 async function fetchCitizenComplaints() {
+  if (!supabase) return citizenComplaints;
+
   const { data, error } = await supabase
     .from("complaints")
     .select("*")
@@ -78,6 +80,8 @@ async function fetchCitizenComplaints() {
 async function saveCitizenComplaint(complaint) {
   // Always keep in-memory copy as fallback
   citizenComplaints.unshift(complaint);
+
+  if (!supabase) return complaint;
 
   const { error } = await supabase.from("complaints").insert({
     id: complaint.id,
@@ -103,6 +107,10 @@ async function saveCitizenComplaint(complaint) {
 
 /** Fetch a single citizen complaint by ID from Supabase */
 async function fetchCitizenComplaintById(id) {
+  if (!supabase) {
+    return citizenComplaints.find((c) => c.id === id) || null;
+  }
+
   const { data, error } = await supabase
     .from("complaints")
     .select("*")

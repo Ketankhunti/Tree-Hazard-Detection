@@ -36,7 +36,7 @@ const HALIFAX_STREETS = [
 
 // Complaint templates based on tree condition
 function generateComplaintText(tree) {
-  const { commonName, dbhLabel, wiresPresent, featureLabel, statusLabel } = tree;
+  const { commonName, dbhLabel, wiresPresent } = tree;
 
   if (tree.featureCode === "LCDS" || tree.assetStatus === "OUT") {
     const templates = [

@@ -11,21 +11,21 @@ import { HazardPoster } from "../components/HazardPoster";
 export function DetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const [complaint, setComplaint] = useState<BackendComplaint | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState<{ id: string; complaint: BackendComplaint | null } | null>(null);
 
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
-    setLoading(true);
     fetchComplaintById(id).then(({ complaint }) => {
       if (!cancelled) {
-        setComplaint(complaint);
-        setLoading(false);
+        setData({ id, complaint });
       }
     });
     return () => { cancelled = true; };
   }, [id]);
+
+  const loading = !data || data.id !== id;
+  const complaint = loading ? null : data.complaint;
 
   if (loading) {
     return (

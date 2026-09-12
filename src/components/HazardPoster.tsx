@@ -1,6 +1,5 @@
 import type { ScoredComplaint } from "../types";
 import { PriorityBadge } from "./PriorityBadge";
-import { HazardTag } from "./HazardTag";
 
 export function HazardPoster({ complaint }: { complaint: ScoredComplaint }) {
   const today = new Date().toLocaleDateString("en-CA");

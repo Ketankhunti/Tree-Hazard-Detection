@@ -1,1 +1,13 @@
-﻿{"name":"tree-hazard-backend","version":"1.0.0","description":"Backend service for Halifax Tree Hazard Detection - fetches real HRM Open Data","type":"module","scripts":{"dev":"node --watch src/server.js","start":"node src/server.js"},"dependencies":{}}
+{
+  "name": "hackathon-claude-devang-backend",
+  "version": "1.0.0",
+  "description": "Backend service for Halifax Tree Hazard Detection - fetches real HRM Open Data",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.1"
+  }
+}

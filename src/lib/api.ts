@@ -38,6 +38,11 @@ export interface Tree311Call {
   outcome: string;
 }
 
+function getErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
 /**
  * Fetch all complaints from the backend.
  * Falls back to mock data on error.
@@ -54,7 +59,7 @@ export async function fetchComplaints(): Promise<{
     const data = await res.json();
     return { complaints: data.complaints, source: "backend" };
   } catch (err) {
-    console.warn("Backend unavailable, using mock data:", err.message);
+    console.warn("Backend unavailable, using mock data:", getErrorMessage(err));
     return { complaints: mockTrees, source: "mock" };
   }
 }
@@ -74,7 +79,7 @@ export async function fetchComplaintById(
     const complaint = await res.json();
     return { complaint, source: "backend" };
   } catch (err) {
-    console.warn("Backend unavailable, using mock data:", err.message);
+    console.warn("Backend unavailable, using mock data:", getErrorMessage(err));
     const complaint = mockTrees.find((c) => c.id === id) || null;
     return { complaint, source: "mock" };
   }
@@ -92,7 +97,7 @@ export async function fetchTreeInventory(): Promise<BackendComplaint["treeData"]
     const data = await res.json();
     return data.trees;
   } catch (err) {
-    console.warn("Tree inventory unavailable:", err.message);
+    console.warn("Tree inventory unavailable:", getErrorMessage(err));
     return [];
   }
 }
@@ -109,7 +114,7 @@ export async function fetch311Calls(): Promise<Tree311Call[]> {
     const data = await res.json();
     return data.calls;
   } catch (err) {
-    console.warn("311 calls unavailable:", err.message);
+    console.warn("311 calls unavailable:", getErrorMessage(err));
     return [];
   }
 }

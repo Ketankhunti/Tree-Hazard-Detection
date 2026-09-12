@@ -1,4 +1,3 @@
-import { createClient } from "@supabase/supabase-js";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -17,13 +16,22 @@ try {
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_PUBLISHABLE_KEY;
 
-if (!supabaseUrl || !supabaseKey) {
-  console.warn("Supabase env vars missing — check backend/.env");
+let client = null;
+
+if (supabaseUrl && supabaseKey) {
+  try {
+    const { createClient } = await import("@supabase/supabase-js");
+    client = createClient(supabaseUrl, supabaseKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      },
+    });
+  } catch (err) {
+    console.warn("Supabase initialization skipped or package not installed:", err.message);
+  }
+} else {
+  console.info("ℹ Supabase credentials not set — using in-memory storage fallback.");
 }
 
-export const supabase = createClient(supabaseUrl ?? "", supabaseKey ?? "", {
-  auth: {
-    persistSession: false,
-    autoRefreshToken: false,
-  },
-});
+export const supabase = client;
