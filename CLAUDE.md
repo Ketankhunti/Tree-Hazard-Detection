@@ -13,6 +13,7 @@ product requirement, not a disclaimer.
 
 ```bash
 npm install
+cp .env.example .env.local   # DATABASE_URL is required (Supabase)
 npm run db:reset   # drop, recreate, seed, and print a verification report
 npm run dev        # http://localhost:5177
 npm run build      # production build
@@ -21,8 +22,9 @@ npm test           # vitest (scoring engine)
 npm run db:seed    # seed without wiping; no-op if already seeded
 ```
 
-Runs with an **empty environment** — no API key, no network. Every external
-dependency degrades to a local fallback. Keep it that way.
+`DATABASE_URL` (Supabase Postgres) is the **only required** variable. Everything
+else — photo analysis, geocoding — is optional and degrades to a local fallback.
+Keep it that way: a missing API key must never fail a resident's submission.
 
 ## Layer structure
 
@@ -30,7 +32,7 @@ dependency degrades to a local fallback. Keep it that way.
 src/
   backend/     server-only. Never imported by anything under frontend/.
     config.ts            env reading; all values optional
-    db/client.ts         SQLite connection, schema, additive migrations
+    db/client.ts         Postgres pool, schema, migrations, transactions
     db/repository.ts     every query; snake_case in, camelCase out
     domain/scoring.ts    hazard rules, classification, fusion, escalation
     domain/bundling.ts   same-day work planner
@@ -127,9 +129,27 @@ Letter portrait, 0.5in margins; the poster is 7.5in wide and must stay inside
 
 ## Gotchas
 
-- `better-sqlite3` is a native module — it is listed in
-  `experimental.serverComponentsExternalPackages`. Do not import it from a
-  client component.
+- **Database is Supabase Postgres via `pg`.** Every repository function is
+  `async` — a forgotten `await` yields a Promise that renders as `[object
+  Promise]` rather than throwing.
+- **jsonb parameters must be `JSON.stringify`'d.** node-postgres converts a JS
+  array into a Postgres array literal, which jsonb rejects. `hazards` is an
+  array, so this bites immediately.
+- **jsonb results come back parsed.** Never `JSON.parse` them.
+- **`COUNT(*)` returns a string** (bigint). Use `toCount()`.
+- **`TIMESTAMPTZ` returns a `Date`**, not a string. `toIso()` normalises.
+- **Never put `sslmode=require` in DATABASE_URL.** pg >= 8.23 treats it as
+  `verify-full`, and a connection-string SSL mode overrides the `ssl` option
+  object - every connection then dies with "self-signed certificate in
+  certificate chain". `connectionSettings()` strips it deliberately.
+- **The direct host (`db.<ref>.supabase.co`) is IPv6-only.** On an IPv4-only
+  network it fails with ENOTFOUND, which looks like a wrong project ref but
+  is not. Use the **Session pooler** (`aws-0-<region>.pooler.supabase.com:5432`,
+  user `postgres.<ref>`). The Transaction pooler (6543) is for serverless only.
+- `npm run db:check` diagnoses all of the above and will auto-discover the
+  pooler region if the direct host is unreachable.
+- **`tsx` does not read `.env.local`.** The db scripts pass
+  `--env-file=.env.local` explicitly; Next loads it on its own.
 - Server actions cannot receive functions as props. Pass plain records
   (this is why the queue rank map crosses the boundary as `Record<string, number>`).
 - `server-only` throws under plain `tsx`, which breaks the seeder. The layer

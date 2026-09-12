@@ -35,12 +35,12 @@ export async function changeStatus(
     return { ok: false, error: `Unknown status: ${nextStatus}` };
   }
 
-  const request = getRequest(requestId);
+  const request = await getRequest(requestId);
   if (!request) return { ok: false, error: "Request not found." };
   if (request.status === nextStatus) return { ok: true };
 
   try {
-    setStatus(requestId, nextStatus, ACTOR, note);
+    await setStatus(requestId, nextStatus, ACTOR, note);
     refresh(requestId);
     return { ok: true };
   } catch (error) {
@@ -65,10 +65,10 @@ export async function markCompleted(requestId: string): Promise<ActionResult> {
  * the button should go back to In Progress.
  */
 export async function reopenRequest(requestId: string): Promise<ActionResult> {
-  const request = getRequest(requestId);
+  const request = await getRequest(requestId);
   if (!request) return { ok: false, error: "Request not found." };
 
-  const history = getStatusHistory(requestId);
+  const history = await getStatusHistory(requestId);
   const priorOpen = [...history]
     .reverse()
     .find(

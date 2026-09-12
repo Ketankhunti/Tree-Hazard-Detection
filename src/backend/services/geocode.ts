@@ -110,6 +110,8 @@ export interface ResolvedLocation {
   latitude: number | null;
   longitude: number | null;
   source: LocationSource;
+  /** How trustworthy the coordinates are. Null when there are none. */
+  precision: LocationPrecision | null;
   /** Shown to the admin so a coarse fix is never mistaken for a survey point. */
   note: string;
 }
@@ -120,31 +122,180 @@ function fallbackStreet(address: string): string {
   return withoutNumber || address.trim() || "Unknown Street";
 }
 
-async function geocodeRemote(
-  address: string
-): Promise<{ latitude: number; longitude: number } | null> {
+/**
+ * Coordinate precision, as reported by the geocoding provider.
+ *
+ * This matters more than it looks. Duplicate detection merges reports within
+ * ~90 m of each other, so a ROOFTOP fix makes that decision trustworthy while
+ * an APPROXIMATE one (a locality centroid) would put every address on the block
+ * at the same point and over-merge. Precision travels with the result so the
+ * admin can see what the pin is actually worth.
+ */
+export type LocationPrecision =
+  | "rooftop"
+  | "interpolated"
+  | "street"
+  | "approximate";
+
+const PRECISION_LABEL: Record<LocationPrecision, string> = {
+  rooftop: "building-level",
+  interpolated: "interpolated along the street",
+  street: "street-level",
+  approximate: "approximate (neighbourhood-level)",
+};
+
+interface RemoteResult {
+  latitude: number;
+  longitude: number;
+  precision: LocationPrecision;
+  formattedAddress: string | null;
+  provider: string;
+}
+
+/** Halifax Regional Municipality, roughly. Guards against a wrong-city match. */
+function withinHalifax(latitude: number, longitude: number): boolean {
+  return (
+    latitude > 44.3 && latitude < 45.2 && longitude > -64.2 && longitude < -62.8
+  );
+}
+
+const GOOGLE_PRECISION: Record<string, LocationPrecision> = {
+  ROOFTOP: "rooftop",
+  RANGE_INTERPOLATED: "interpolated",
+  GEOMETRIC_CENTER: "street",
+  APPROXIMATE: "approximate",
+};
+
+interface GoogleResponse {
+  status: string;
+  error_message?: string;
+  results: Array<{
+    formatted_address?: string;
+    geometry?: {
+      location?: { lat: number; lng: number };
+      location_type?: string;
+    };
+  }>;
+}
+
+/**
+ * Google Geocoding API.
+ *
+ * Biased to Halifax with `components`, which is a hard filter rather than a
+ * hint - "Robie Street" exists in other cities and an unfiltered query will
+ * cheerfully return one of them.
+ */
+async function geocodeGoogle(address: string): Promise<RemoteResult | null> {
+  const key = config.googleMapsApiKey;
+  if (!key) return null;
+
+  try {
+    const url = new URL("https://maps.googleapis.com/maps/api/geocode/json");
+    url.searchParams.set("address", address);
+    url.searchParams.set(
+      "components",
+      "country:CA|administrative_area:NS|locality:Halifax"
+    );
+    url.searchParams.set("region", "ca");
+    url.searchParams.set("key", key);
+
+    const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    if (!response.ok) {
+      console.warn("[geocode] Google HTTP " + response.status);
+      return null;
+    }
+
+    const body = (await response.json()) as GoogleResponse;
+
+    // These are configuration failures, not "address not found". Surfacing them
+    // loudly saves a long hunt for why every pin is a street centroid.
+    if (body.status === "REQUEST_DENIED" || body.status === "INVALID_REQUEST") {
+      console.error(
+        "[geocode] Google rejected the request (" +
+          body.status +
+          "): " +
+          (body.error_message ??
+            "check the key, its referrer/IP restrictions, and that the " +
+              "Geocoding API is enabled for the project")
+      );
+      return null;
+    }
+    if (body.status === "OVER_QUERY_LIMIT" || body.status === "OVER_DAILY_LIMIT") {
+      console.error("[geocode] Google quota exhausted (" + body.status + ")");
+      return null;
+    }
+    if (body.status !== "OK") return null;
+
+    const first = body.results[0];
+    const point = first?.geometry?.location;
+    if (!point) return null;
+
+    if (!withinHalifax(point.lat, point.lng)) {
+      console.warn(
+        '[geocode] Google returned a point outside Halifax for "' +
+          address +
+          '"; ignoring'
+      );
+      return null;
+    }
+
+    return {
+      latitude: point.lat,
+      longitude: point.lng,
+      precision:
+        GOOGLE_PRECISION[first.geometry?.location_type ?? ""] ?? "approximate",
+      formattedAddress: first.formatted_address ?? null,
+      provider: "google",
+    };
+  } catch {
+    // Timeouts and network failures must never block a submission.
+    return null;
+  }
+}
+
+/** Nominatim-compatible fallback, used when no Google key is configured. */
+async function geocodeNominatim(address: string): Promise<RemoteResult | null> {
   if (!config.geocoderUrl) return null;
   try {
     const url = new URL(config.geocoderUrl);
-    url.searchParams.set("q", `${address}, Halifax, Nova Scotia, Canada`);
+    url.searchParams.set("q", address + ", Halifax, Nova Scotia, Canada");
     url.searchParams.set("format", "json");
     url.searchParams.set("limit", "1");
 
     const response = await fetch(url, {
       headers: { "User-Agent": config.geocoderUserAgent },
-      signal: AbortSignal.timeout(4000),
+      signal: AbortSignal.timeout(5000),
     });
     if (!response.ok) return null;
 
-    const results = (await response.json()) as Array<{ lat: string; lon: string }>;
+    const results = (await response.json()) as Array<{
+      lat: string;
+      lon: string;
+      display_name?: string;
+    }>;
     const first = results[0];
     if (!first) return null;
 
-    return { latitude: Number(first.lat), longitude: Number(first.lon) };
+    const latitude = Number(first.lat);
+    const longitude = Number(first.lon);
+    if (!withinHalifax(latitude, longitude)) return null;
+
+    return {
+      latitude,
+      longitude,
+      // Nominatim does not report precision in a comparable way.
+      precision: "street",
+      formattedAddress: first.display_name ?? null,
+      provider: "nominatim",
+    };
   } catch {
-    // Network failures must never block a submission.
     return null;
   }
+}
+
+/** Google when a key is present, otherwise Nominatim, otherwise nothing. */
+async function geocodeRemote(address: string): Promise<RemoteResult | null> {
+  return (await geocodeGoogle(address)) ?? (await geocodeNominatim(address));
 }
 
 export async function resolveLocation(input: {
@@ -163,20 +314,32 @@ export async function resolveLocation(input: {
       latitude: input.exif.latitude,
       longitude: input.exif.longitude,
       source: "exif",
-      note: "Coordinates read from the submitted photo's GPS metadata.",
+      precision: "rooftop",
+      note: "Coordinates read from the submitted photo's GPS metadata - the phone was at the tree.",
     };
   }
 
   // 2. Live geocoder, when one is configured.
   const remote = await geocodeRemote(input.address);
   if (remote) {
+    const imprecise = remote.precision === "approximate";
     return {
       street,
       neighborhood,
       latitude: remote.latitude,
       longitude: remote.longitude,
       source: "geocoded",
-      note: "Coordinates from the configured geocoding service.",
+      precision: remote.precision,
+      note:
+        "Geocoded by " +
+        remote.provider +
+        " to " +
+        PRECISION_LABEL[remote.precision] +
+        " accuracy" +
+        (remote.formattedAddress ? " (" + remote.formattedAddress + ")" : "") +
+        (imprecise
+          ? ". Too coarse to distinguish neighbouring trees - confirm the pin before dispatch."
+          : "."),
     };
   }
 
@@ -188,7 +351,8 @@ export async function resolveLocation(input: {
       latitude: entry.latitude,
       longitude: entry.longitude,
       source: "geocoded",
-      note: `Approximate street centroid for ${entry.street}. Accurate to a few hundred metres - confirm the pin before dispatch.`,
+      precision: "street",
+      note: `Street centroid for ${entry.street} from the local gazetteer. Accurate to a few hundred metres - confirm the pin before dispatch.`,
     };
   }
 
@@ -199,6 +363,7 @@ export async function resolveLocation(input: {
     latitude: null,
     longitude: null,
     source: "manual",
-    note: "Address did not match a known Halifax street. Needs a manual map pin before it can be bundled with nearby work.",
+    precision: null,
+    note: "Address did not match a known Halifax street and geocoding returned nothing. Needs a manual map pin before it can be bundled with nearby work.",
   };
 }

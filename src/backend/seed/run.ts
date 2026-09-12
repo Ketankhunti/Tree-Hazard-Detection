@@ -10,7 +10,7 @@
  * report is where it shows up.
  */
 
-import { dropAll, getDb } from "@/backend/db/client";
+import { closePool, dropAll, query } from "@/backend/db/client";
 import { distanceMeters, formatDistance } from "@/shared/geo";
 import {
   insertFeedback,
@@ -70,7 +70,7 @@ async function seedOne(fixture: Fixture): Promise<void> {
       ? isoDaysAgo(fixture.completedDaysAgo)
       : null;
 
-  insertRequest({
+  await insertRequest({
     id: fixture.id,
     reference: fixture.reference,
     reporterName: fixture.reporterName,
@@ -90,10 +90,10 @@ async function seedOne(fixture: Fixture): Promise<void> {
   });
 
   // Classify once, exactly as the intake route will when a resident submits.
-  saveClassification(fixture.id, classifyComplaint(fixture.description));
+  await saveClassification(fixture.id, classifyComplaint(fixture.description));
 
   // Every request starts life as Submitted; replay how it reached its status.
-  recordStatusChange({
+  await recordStatusChange({
     requestId: fixture.id,
     fromStatus: null,
     toStatus: "Submitted",
@@ -103,7 +103,7 @@ async function seedOne(fixture: Fixture): Promise<void> {
   });
 
   if (fixture.status !== "Submitted") {
-    recordStatusChange({
+    await recordStatusChange({
       requestId: fixture.id,
       fromStatus: "Submitted",
       toStatus: fixture.status as RequestStatus,
@@ -118,7 +118,7 @@ async function seedOne(fixture: Fixture): Promise<void> {
     const filename = filenameFor(imageId, PLACEHOLDER_MIME);
     const body = Buffer.from(placeholderSvg(fixture), "utf8");
     await writeImage(filename, body);
-    insertImage({
+    await insertImage({
       id: imageId,
       requestId: fixture.id,
       filename,
@@ -130,7 +130,7 @@ async function seedOne(fixture: Fixture): Promise<void> {
   }
 
   if (fixture.feedback) {
-    insertFeedback({
+    await insertFeedback({
       requestId: fixture.id,
       rating: fixture.feedback.rating,
       comment: fixture.feedback.comment,
@@ -138,8 +138,8 @@ async function seedOne(fixture: Fixture): Promise<void> {
   }
 }
 
-function report(): void {
-  const queue = listOpenRequests();
+async function report(): Promise<void> {
+  const queue = await listOpenRequests();
 
   console.log("\nRanked queue (open requests only)");
   console.log("-".repeat(78));
@@ -206,22 +206,22 @@ function report(): void {
 
 async function main(): Promise<void> {
   const reset = process.argv.includes("--reset");
-  const db = getDb();
 
   if (reset) {
     console.log("Dropping all tables...");
-    dropAll(db);
+    await dropAll();
   }
 
-  const existing = db
-    .prepare("SELECT COUNT(*) AS n FROM requests")
-    .get() as { n: number };
+  const [{ n }] = await query<{ n: string }>(
+    "SELECT COUNT(*) AS n FROM requests"
+  );
+  const existing = { n: Number(n) };
 
   if (existing.n > 0 && !reset) {
     console.log(
       `Database already holds ${existing.n} requests. Use "npm run db:reset" to rebuild.`
     );
-    report();
+    await report();
     return;
   }
 
@@ -237,22 +237,25 @@ async function main(): Promise<void> {
     if (fixture.duplicateOf) await seedOne(fixture);
   }
 
-  const counts = db
-    .prepare("SELECT status, COUNT(*) AS n FROM requests GROUP BY status")
-    .all() as Array<{ status: string; n: number }>;
+  const counts = await query<{ status: string; n: string }>(
+    "SELECT status, COUNT(*) AS n FROM requests GROUP BY status ORDER BY status"
+  );
 
   console.log(`\nSeeded ${fixtures.length} requests:`);
   for (const row of counts) console.log(`  ${row.status.padEnd(14)} ${row.n}`);
 
-  const images = db.prepare("SELECT COUNT(*) AS n FROM images").get() as {
-    n: number;
-  };
+  const [images] = await query<{ n: string }>(
+    "SELECT COUNT(*) AS n FROM images"
+  );
   console.log(`  ${"photos".padEnd(14)} ${images.n}`);
 
-  report();
+  await report();
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+main()
+  .then(() => closePool())
+  .catch(async (error) => {
+    console.error(error);
+    await closePool();
+    process.exit(1);
+  });

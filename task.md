@@ -28,10 +28,9 @@ Last updated: 2026-09-12
 Migrated from a client-only Vite SPA to Next.js 14 (App Router) so API routes,
 pages, and file handling live in one app.
 
-- SQLite via `better-sqlite3`, schema applied idempotently on first access
+- Supabase PostgreSQL via `pg`, schema applied idempotently on first query
 - Tables: `requests`, `images`, `assessments`, `status_history`, `feedback`
-- Additive column migrations (`PRAGMA table_info` guard) so an existing database
-  survives new columns
+- Additive migrations via `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`
 - Repository layer — every query lives there; nothing above it sees SQL
 - Photo storage on disk **outside the web root**, served through
   `/api/images/[id]` so an auth check has somewhere to go
@@ -253,6 +252,40 @@ Not started. `/admin` is currently open to anyone. Also needs rate limiting on
 public submission and a moderation check folded into the vision pass.
 
 ---
+
+## Database migration — SQLite to Supabase Postgres ✅
+
+Replaced `better-sqlite3` with `pg` pointed at Supabase.
+
+The dialect changes were mechanical (`?` -> `$1`, `AUTOINCREMENT` -> `SERIAL`,
+`REAL` -> `DOUBLE PRECISION`, `INTEGER` flags -> `BOOLEAN`, `TEXT` timestamps ->
+`TIMESTAMPTZ`, JSON text -> `JSONB`). The substantive change was that
+`better-sqlite3` is **synchronous** and `pg` is **asynchronous**, so every
+repository function became `async` and every call site had to be awaited —
+pages, server actions, the intake pipeline and the seeder.
+
+Also gained from the move: real transactions with `SELECT ... FOR UPDATE` in
+`setStatus`, so two dispatchers closing the same job serialise; and a partial
+index on `assessments(request_id) WHERE is_current`, which SQLite could not
+express as cleanly.
+
+**Verified against the live Supabase instance** (PostgreSQL 17.6, us-west-2):
+schema created, 28 requests / 28 assessments / 12 images / 40 status rows / 1
+feedback row seeded, and `/admin` plus a detail page render from Postgres with
+the day plan, escalation notice and poster intact.
+
+Two Supabase-specific bugs were found and fixed by doing this for real:
+
+1. **`sslmode=require` broke every connection.** pg >= 8.23 treats it as
+   `verify-full`, and a connection-string SSL mode overrides the `ssl` option
+   object, so Supabase's chain failed verification regardless of
+   `rejectUnauthorized`. `connectionSettings()` now strips it.
+2. **`tsx` never loaded `.env.local`**, so the seeder could not see
+   `DATABASE_URL`. The db scripts now pass `--env-file`.
+
+Added `npm run db:check`: a diagnostic that names the IPv6 direct-host trap, the
+TLS trap, and auth failures, and auto-discovers the Session pooler region when
+the direct host is unreachable.
 
 ## Project structure
 

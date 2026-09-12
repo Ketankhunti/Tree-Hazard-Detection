@@ -14,10 +14,16 @@ export const config = {
   visionModel: process.env.VISION_MODEL ?? "claude-opus-5",
 
   /**
-   * Opt-in live geocoding. Off by default so the app never depends on a
-   * third-party service being reachable during a demo; the local Halifax
-   * gazetteer handles the seeded street names either way.
+   * Live geocoding. Optional on purpose - the local Halifax gazetteer resolves
+   * the known streets with no network call, so a demo never depends on a
+   * third-party service being reachable.
+   *
+   * Read server-side only. Do NOT rename this with a NEXT_PUBLIC_ prefix: that
+   * would ship the key in the browser bundle where anyone can spend it.
    */
+  googleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY ?? null,
+
+  /** Nominatim-compatible fallback, used only when no Google key is set. */
   geocoderUrl: process.env.GEOCODER_URL ?? null,
   geocoderUserAgent:
     process.env.GEOCODER_USER_AGENT ?? "halifax-tree-triage/2.0 (demo)",

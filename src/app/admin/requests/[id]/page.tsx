@@ -15,23 +15,30 @@ import { OPEN_STATUSES } from "@/shared/types";
 
 export const dynamic = "force-dynamic";
 
-export default function RequestDetailPage({
+export default async function RequestDetailPage({
   params,
 }: {
   params: { id: string };
 }) {
-  const request = getRequest(params.id);
+  const request = await getRequest(params.id);
   if (!request) notFound();
 
   // The queue is needed both to find bundling candidates and to show where each
   // recommendation sits in the main ranking.
-  const openQueue = listOpenRequests();
+  const openQueue = await listOpenRequests();
   const rankById = new Map(openQueue.map((item, index) => [item.id, index + 1]));
 
   // A closed request has no day plan - there is nothing left to schedule.
   const plan = (OPEN_STATUSES as string[]).includes(request.status)
     ? buildBundlePlan(request, openQueue)
     : null;
+
+  const [images, history, duplicates, feedback] = await Promise.all([
+    getImages(request.id),
+    getStatusHistory(request.id),
+    getDuplicatesOf(request.id),
+    getFeedback(request.id),
+  ]);
 
   const bundledIds = new Set(plan?.selected.map((c) => c.request.id) ?? []);
   const otherOpen = openQueue.filter(
@@ -43,10 +50,10 @@ export default function RequestDetailPage({
       <AppHeader />
       <RequestDetail
         request={request}
-        images={getImages(request.id)}
-        history={getStatusHistory(request.id)}
-        duplicates={getDuplicatesOf(request.id)}
-        feedback={getFeedback(request.id)}
+        images={images}
+        history={history}
+        duplicates={duplicates}
+        feedback={feedback}
         plan={plan}
         otherOpen={otherOpen}
         queueRank={rankById.get(request.id) ?? null}

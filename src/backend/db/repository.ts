@@ -1,4 +1,4 @@
-import { getDb } from "@/backend/db/client";
+import { query, queryOne, withTransaction } from "@/backend/db/client";
 import {
   CLOSED_STATUSES,
   OPEN_STATUSES,
@@ -18,8 +18,16 @@ import {
 import { daysSince, scoreRequest } from "@/backend/domain/scoring";
 
 /**
- * Every read path goes through here. Rows come out of SQLite in snake_case and
- * leave as camelCase domain objects; nothing above this file sees SQL.
+ * Every read path goes through here. Rows come out of Postgres in snake_case
+ * and leave as camelCase domain objects; nothing above this file sees SQL.
+ *
+ * Two driver details the mappers absorb, so callers never think about them:
+ *
+ *   TIMESTAMPTZ  comes back as a JS `Date`. The domain speaks ISO strings, so
+ *                `toIso()` normalises on the way out.
+ *   JSONB        comes back already parsed. Do NOT call JSON.parse on it. On
+ *                the way in it must be JSON.stringify'd - see the note in
+ *                client.ts about arrays becoming Postgres array literals.
  */
 
 // ---------------------------------------------------------------------------
@@ -38,27 +46,37 @@ interface RequestRow {
   longitude: number | null;
   location_source: string;
   description: string;
-  submitted_at: string;
+  submitted_at: Date | string;
   status: string;
   duplicate_of_id: string | null;
   estimated_hours: number;
-  completed_at: string | null;
-  created_at: string;
-  updated_at: string;
+  completed_at: Date | string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
 }
 
 interface JoinedRow extends RequestRow {
   danger_score: number | null;
   review_status: string | null;
   review_note: string | null;
-  hazards_json: string | null;
-  image_findings_json: string | null;
-  fusion_json: string | null;
+  hazards_json: DetectedHazard[] | null;
+  image_findings_json: ImageFindings | null;
+  fusion_json: Fusion | null;
   engine_version: string | null;
   assessment_source: string | null;
-  computed_at: string | null;
-  image_count: number;
-  duplicate_count: number;
+  computed_at: Date | string | null;
+  image_count: string | number;
+  duplicate_count: string | number;
+}
+
+function toIso(value: Date | string | null | undefined): string {
+  if (!value) return "";
+  return value instanceof Date ? value.toISOString() : value;
+}
+
+/** COUNT() returns bigint, which node-postgres hands back as a string. */
+function toCount(value: string | number | null): number {
+  return typeof value === "number" ? value : Number(value ?? 0);
 }
 
 function toRequest(row: RequestRow): TreeRequest {
@@ -74,13 +92,13 @@ function toRequest(row: RequestRow): TreeRequest {
     longitude: row.longitude,
     locationSource: row.location_source as LocationSource,
     description: row.description,
-    submittedAt: row.submitted_at,
+    submittedAt: toIso(row.submitted_at),
     status: row.status as RequestStatus,
     duplicateOfId: row.duplicate_of_id,
-    estimatedHours: row.estimated_hours,
-    completedAt: row.completed_at,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    estimatedHours: Number(row.estimated_hours),
+    completedAt: row.completed_at ? toIso(row.completed_at) : null,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at),
   };
 }
 
@@ -96,27 +114,22 @@ function toScored(row: JoinedRow, now: Date): ScoredRequest {
   const daysWaiting = daysSince(request.submittedAt, now);
 
   const classification: Classification = {
-    hazards: row.hazards_json
-      ? (JSON.parse(row.hazards_json) as DetectedHazard[])
-      : [],
+    // jsonb arrives parsed - no JSON.parse here.
+    hazards: row.hazards_json ?? [],
     dangerScore: row.danger_score ?? 0,
     reviewStatus: (row.review_status as ReviewStatus | null) ?? "Unsure",
     reviewNote:
       row.review_note ?? "Not yet classified - awaiting automated assessment.",
-    imageFindings: row.image_findings_json
-      ? (JSON.parse(row.image_findings_json) as ImageFindings)
-      : null,
-    fusion: row.fusion_json
-      ? (JSON.parse(row.fusion_json) as Fusion)
-      : {
-          verdict: "text-only",
-          textDanger: row.danger_score ?? 0,
-          imageDanger: null,
-          note: "No photograph was analyzed. Score is based on the description alone.",
-        },
+    imageFindings: row.image_findings_json ?? null,
+    fusion: row.fusion_json ?? {
+      verdict: "text-only",
+      textDanger: row.danger_score ?? 0,
+      imageDanger: null,
+      note: "No photograph was analyzed. Score is based on the description alone.",
+    },
     engineVersion: row.engine_version ?? "none",
     source: (row.assessment_source as Classification["source"] | null) ?? "text",
-    computedAt: row.computed_at ?? request.createdAt,
+    computedAt: row.computed_at ? toIso(row.computed_at) : request.createdAt,
   };
 
   return {
@@ -126,8 +139,8 @@ function toScored(row: JoinedRow, now: Date): ScoredRequest {
       daysWaiting,
       street: request.street,
     }),
-    imageCount: row.image_count,
-    duplicateCount: row.duplicate_count,
+    imageCount: toCount(row.image_count),
+    duplicateCount: toCount(row.duplicate_count),
   };
 }
 
@@ -146,7 +159,7 @@ const SELECT_JOINED = `
          (SELECT COUNT(*) FROM requests d WHERE d.duplicate_of_id = r.id) AS duplicate_count
   FROM requests r
   LEFT JOIN assessments a
-    ON a.request_id = r.id AND a.is_current = 1
+    ON a.request_id = r.id AND a.is_current
 `;
 
 // ---------------------------------------------------------------------------
@@ -159,123 +172,110 @@ const SELECT_JOINED = `
  * Ordering happens in JS, not SQL: the final score depends on wait time, which
  * is a function of "now" rather than a stored column.
  */
-export function listOpenRequests(now: Date = new Date()): ScoredRequest[] {
-  const placeholders = OPEN_STATUSES.map(() => "?").join(", ");
-  const rows = getDb()
-    .prepare(
-      `${SELECT_JOINED} WHERE r.status IN (${placeholders}) AND r.duplicate_of_id IS NULL`
-    )
-    .all(...OPEN_STATUSES) as JoinedRow[];
-
+export async function listOpenRequests(
+  now: Date = new Date()
+): Promise<ScoredRequest[]> {
+  const rows = await query<JoinedRow>(
+    `${SELECT_JOINED} WHERE r.status = ANY($1) AND r.duplicate_of_id IS NULL`,
+    [OPEN_STATUSES]
+  );
   return rows.map((row) => toScored(row, now)).sort(compareByPriority);
 }
 
-export function listClosedRequests(now: Date = new Date()): ScoredRequest[] {
-  const placeholders = CLOSED_STATUSES.map(() => "?").join(", ");
-  const rows = getDb()
-    .prepare(`${SELECT_JOINED} WHERE r.status IN (${placeholders})`)
-    .all(...CLOSED_STATUSES) as JoinedRow[];
-
+export async function listClosedRequests(
+  now: Date = new Date()
+): Promise<ScoredRequest[]> {
+  const rows = await query<JoinedRow>(
+    `${SELECT_JOINED} WHERE r.status = ANY($1)`,
+    [CLOSED_STATUSES]
+  );
   return rows.map((row) => toScored(row, now)).sort(compareByPriority);
 }
 
-export function listAllRequests(now: Date = new Date()): ScoredRequest[] {
-  const rows = getDb().prepare(SELECT_JOINED).all() as JoinedRow[];
+export async function listAllRequests(
+  now: Date = new Date()
+): Promise<ScoredRequest[]> {
+  const rows = await query<JoinedRow>(SELECT_JOINED);
   return rows.map((row) => toScored(row, now)).sort(compareByPriority);
 }
 
-export function getRequest(
+export async function getRequest(
   id: string,
   now: Date = new Date()
-): ScoredRequest | null {
-  const row = getDb()
-    .prepare(`${SELECT_JOINED} WHERE r.id = ? OR r.reference = ?`)
-    .get(id, id) as JoinedRow | undefined;
+): Promise<ScoredRequest | null> {
+  const row = await queryOne<JoinedRow>(
+    `${SELECT_JOINED} WHERE r.id = $1 OR r.reference = $1`,
+    [id]
+  );
   return row ? toScored(row, now) : null;
 }
 
 /** Other reports already linked to this one as the same tree. */
-export function getDuplicatesOf(
+export async function getDuplicatesOf(
   id: string,
   now: Date = new Date()
-): ScoredRequest[] {
-  const rows = getDb()
-    .prepare(`${SELECT_JOINED} WHERE r.duplicate_of_id = ?`)
-    .all(id) as JoinedRow[];
+): Promise<ScoredRequest[]> {
+  const rows = await query<JoinedRow>(
+    `${SELECT_JOINED} WHERE r.duplicate_of_id = $1`,
+    [id]
+  );
   return rows.map((row) => toScored(row, now));
 }
 
-export function getImages(requestId: string): RequestImage[] {
-  const rows = getDb()
-    .prepare(
-      `SELECT * FROM images WHERE request_id = ? ORDER BY created_at ASC`
-    )
-    .all(requestId) as Array<{
-    id: string;
-    request_id: string;
-    filename: string;
-    mime_type: string;
-    byte_size: number;
-    exif_latitude: number | null;
-    exif_longitude: number | null;
-    created_at: string;
-  }>;
-
-  return rows.map((row) => ({
-    id: row.id,
-    requestId: row.request_id,
-    filename: row.filename,
-    mimeType: row.mime_type,
-    byteSize: row.byte_size,
-    exifLatitude: row.exif_latitude,
-    exifLongitude: row.exif_longitude,
-    createdAt: row.created_at,
-  }));
+interface ImageRow {
+  id: string;
+  request_id: string;
+  filename: string;
+  mime_type: string;
+  byte_size: number;
+  exif_latitude: number | null;
+  exif_longitude: number | null;
+  created_at: Date | string;
 }
 
-export function getImage(imageId: string): RequestImage | null {
-  const row = getDb()
-    .prepare(`SELECT * FROM images WHERE id = ?`)
-    .get(imageId) as
-    | {
-        id: string;
-        request_id: string;
-        filename: string;
-        mime_type: string;
-        byte_size: number;
-        exif_latitude: number | null;
-        exif_longitude: number | null;
-        created_at: string;
-      }
-    | undefined;
-
-  if (!row) return null;
+function toImage(row: ImageRow): RequestImage {
   return {
     id: row.id,
     requestId: row.request_id,
     filename: row.filename,
     mimeType: row.mime_type,
-    byteSize: row.byte_size,
+    byteSize: Number(row.byte_size),
     exifLatitude: row.exif_latitude,
     exifLongitude: row.exif_longitude,
-    createdAt: row.created_at,
+    createdAt: toIso(row.created_at),
   };
 }
 
-export function getStatusHistory(requestId: string): StatusChange[] {
-  const rows = getDb()
-    .prepare(
-      `SELECT * FROM status_history WHERE request_id = ? ORDER BY created_at ASC, id ASC`
-    )
-    .all(requestId) as Array<{
+export async function getImages(requestId: string): Promise<RequestImage[]> {
+  const rows = await query<ImageRow>(
+    `SELECT * FROM images WHERE request_id = $1 ORDER BY created_at ASC`,
+    [requestId]
+  );
+  return rows.map(toImage);
+}
+
+export async function getImage(imageId: string): Promise<RequestImage | null> {
+  const row = await queryOne<ImageRow>(`SELECT * FROM images WHERE id = $1`, [
+    imageId,
+  ]);
+  return row ? toImage(row) : null;
+}
+
+export async function getStatusHistory(
+  requestId: string
+): Promise<StatusChange[]> {
+  const rows = await query<{
     id: number;
     request_id: string;
     from_status: string | null;
     to_status: string;
     actor: string;
     note: string | null;
-    created_at: string;
-  }>;
+    created_at: Date | string;
+  }>(
+    `SELECT * FROM status_history WHERE request_id = $1 ORDER BY created_at ASC, id ASC`,
+    [requestId]
+  );
 
   return rows.map((row) => ({
     id: row.id,
@@ -284,37 +284,44 @@ export function getStatusHistory(requestId: string): StatusChange[] {
     toStatus: row.to_status as RequestStatus,
     actor: row.actor,
     note: row.note,
-    createdAt: row.created_at,
+    createdAt: toIso(row.created_at),
   }));
 }
 
-export function getFeedback(requestId: string): Feedback[] {
-  const rows = getDb()
-    .prepare(
-      `SELECT * FROM feedback WHERE request_id = ? ORDER BY created_at DESC`
-    )
-    .all(requestId) as Array<{
+export async function getFeedback(requestId: string): Promise<Feedback[]> {
+  const rows = await query<{
     id: number;
     request_id: string;
     rating: number | null;
     comment: string | null;
-    created_at: string;
-  }>;
+    created_at: Date | string;
+  }>(`SELECT * FROM feedback WHERE request_id = $1 ORDER BY created_at DESC`, [
+    requestId,
+  ]);
 
   return rows.map((row) => ({
     id: row.id,
     requestId: row.request_id,
     rating: row.rating,
     comment: row.comment,
-    createdAt: row.created_at,
+    createdAt: toIso(row.created_at),
   }));
 }
 
-export function countByStatus(): Record<string, number> {
-  const rows = getDb()
-    .prepare(`SELECT status, COUNT(*) AS n FROM requests GROUP BY status`)
-    .all() as Array<{ status: string; n: number }>;
-  return Object.fromEntries(rows.map((row) => [row.status, row.n]));
+export async function countByStatus(): Promise<Record<string, number>> {
+  const rows = await query<{ status: string; n: string }>(
+    `SELECT status, COUNT(*) AS n FROM requests GROUP BY status`
+  );
+  return Object.fromEntries(rows.map((row) => [row.status, toCount(row.n)]));
+}
+
+/** Next sequential human-readable reference for the current year. */
+export async function nextReference(year: number): Promise<string> {
+  const row = await queryOne<{ n: string }>(
+    `SELECT COUNT(*) AS n FROM requests WHERE reference LIKE $1`,
+    [`HFX-${year}-%`]
+  );
+  return `HFX-${year}-${String(toCount(row?.n ?? "0") + 1).padStart(4, "0")}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -340,69 +347,76 @@ export interface NewRequestInput {
   completedAt?: string | null;
 }
 
-export function insertRequest(input: NewRequestInput): void {
-  const now = new Date().toISOString();
-  getDb()
-    .prepare(
-      `INSERT INTO requests (
-        id, reference, reporter_name, reporter_email, address, street,
-        neighborhood, latitude, longitude, location_source, description,
-        submitted_at, status, duplicate_of_id, estimated_hours, completed_at,
-        created_at, updated_at
-      ) VALUES (
-        @id, @reference, @reporterName, @reporterEmail, @address, @street,
-        @neighborhood, @latitude, @longitude, @locationSource, @description,
-        @submittedAt, @status, @duplicateOfId, @estimatedHours, @completedAt,
-        @createdAt, @updatedAt
-      )`
-    )
-    .run({
-      ...input,
-      status: input.status ?? "Submitted",
-      duplicateOfId: input.duplicateOfId ?? null,
-      estimatedHours: input.estimatedHours ?? 2,
-      completedAt: input.completedAt ?? null,
-      createdAt: now,
-      updatedAt: now,
-    });
+export async function insertRequest(input: NewRequestInput): Promise<void> {
+  await query(
+    `INSERT INTO requests (
+       id, reference, reporter_name, reporter_email, address, street,
+       neighborhood, latitude, longitude, location_source, description,
+       submitted_at, status, duplicate_of_id, estimated_hours, completed_at,
+       created_at, updated_at
+     ) VALUES (
+       $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+       now(), now()
+     )`,
+    [
+      input.id,
+      input.reference,
+      input.reporterName,
+      input.reporterEmail,
+      input.address,
+      input.street,
+      input.neighborhood,
+      input.latitude,
+      input.longitude,
+      input.locationSource,
+      input.description,
+      input.submittedAt,
+      input.status ?? "Submitted",
+      input.duplicateOfId ?? null,
+      input.estimatedHours ?? 2,
+      input.completedAt ?? null,
+    ]
+  );
 }
 
 /** Writes a classification and retires whatever was current before it. */
-export function saveClassification(
+export async function saveClassification(
   requestId: string,
   classification: Classification
-): void {
-  const db = getDb();
-  const tx = db.transaction(() => {
-    db.prepare(
-      `UPDATE assessments SET is_current = 0 WHERE request_id = ? AND is_current = 1`
-    ).run(requestId);
+): Promise<void> {
+  await withTransaction(async (client) => {
+    await client.query(
+      `UPDATE assessments SET is_current = FALSE
+        WHERE request_id = $1 AND is_current`,
+      [requestId]
+    );
 
-    db.prepare(
+    await client.query(
       `INSERT INTO assessments (
-        request_id, danger_score, review_status, review_note, hazards_json,
-        image_findings_json, fusion_json, engine_version, source, computed_at,
-        is_current
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
-    ).run(
-      requestId,
-      classification.dangerScore,
-      classification.reviewStatus,
-      classification.reviewNote,
-      JSON.stringify(classification.hazards),
-      classification.imageFindings
-        ? JSON.stringify(classification.imageFindings)
-        : null,
-      JSON.stringify(classification.fusion),
-      classification.engineVersion,
-      classification.source,
-      classification.computedAt
+         request_id, danger_score, review_status, review_note, hazards_json,
+         image_findings_json, fusion_json, engine_version, source, computed_at,
+         is_current
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, TRUE)`,
+      [
+        requestId,
+        classification.dangerScore,
+        classification.reviewStatus,
+        classification.reviewNote,
+        // Stringified on purpose: see the jsonb note in client.ts.
+        JSON.stringify(classification.hazards),
+        classification.imageFindings
+          ? JSON.stringify(classification.imageFindings)
+          : null,
+        JSON.stringify(classification.fusion),
+        classification.engineVersion,
+        classification.source,
+        classification.computedAt,
+      ]
     );
   });
-  tx();
 }
 
-export function insertImage(image: {
+export async function insertImage(image: {
   id: string;
   requestId: string;
   filename: string;
@@ -410,15 +424,13 @@ export function insertImage(image: {
   byteSize: number;
   exifLatitude?: number | null;
   exifLongitude?: number | null;
-}): void {
-  getDb()
-    .prepare(
-      `INSERT INTO images (
-        id, request_id, filename, mime_type, byte_size,
-        exif_latitude, exif_longitude, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    .run(
+}): Promise<void> {
+  await query(
+    `INSERT INTO images (
+       id, request_id, filename, mime_type, byte_size,
+       exif_latitude, exif_longitude, created_at
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, now())`,
+    [
       image.id,
       image.requestId,
       image.filename,
@@ -426,83 +438,79 @@ export function insertImage(image: {
       image.byteSize,
       image.exifLatitude ?? null,
       image.exifLongitude ?? null,
-      new Date().toISOString()
-    );
+    ]
+  );
 }
 
-export function recordStatusChange(change: {
+export async function recordStatusChange(change: {
   requestId: string;
   fromStatus: RequestStatus | null;
   toStatus: RequestStatus;
   actor: string;
   note?: string | null;
   createdAt?: string;
-}): void {
-  getDb()
-    .prepare(
-      `INSERT INTO status_history (request_id, from_status, to_status, actor, note, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`
-    )
-    .run(
+}): Promise<void> {
+  await query(
+    `INSERT INTO status_history (request_id, from_status, to_status, actor, note, created_at)
+     VALUES ($1, $2, $3, $4, $5, COALESCE($6::timestamptz, now()))`,
+    [
       change.requestId,
       change.fromStatus,
       change.toStatus,
       change.actor,
       change.note ?? null,
-      change.createdAt ?? new Date().toISOString()
-    );
+      change.createdAt ?? null,
+    ]
+  );
 }
 
 /**
  * Moves a request to a new status and appends to its history in one
  * transaction, so the audit trail can never disagree with the row.
  */
-export function setStatus(
+export async function setStatus(
   requestId: string,
   toStatus: RequestStatus,
   actor: string,
   note?: string
-): void {
-  const db = getDb();
-  const tx = db.transaction(() => {
-    const current = db
-      .prepare(`SELECT status FROM requests WHERE id = ?`)
-      .get(requestId) as { status: string } | undefined;
-    if (!current) throw new Error(`Unknown request: ${requestId}`);
+): Promise<void> {
+  await withTransaction(async (client) => {
+    // FOR UPDATE: two dispatchers closing the same job must serialise, or the
+    // history could record a transition that never happened.
+    const current = await client.query<{ status: string }>(
+      `SELECT status FROM requests WHERE id = $1 FOR UPDATE`,
+      [requestId]
+    );
+    const from = current.rows[0];
+    if (!from) throw new Error(`Unknown request: ${requestId}`);
 
-    const now = new Date().toISOString();
-    db.prepare(
+    await client.query(
       `UPDATE requests
-         SET status = ?,
-             completed_at = CASE WHEN ? = 'Completed' THEN ? ELSE completed_at END,
-             updated_at = ?
-       WHERE id = ?`
-    ).run(toStatus, toStatus, now, now, requestId);
+          SET status = $2,
+              completed_at = CASE WHEN $2 = 'Completed' THEN now() ELSE completed_at END,
+              updated_at = now()
+        WHERE id = $1`,
+      [requestId, toStatus]
+    );
 
-    db.prepare(
+    await client.query(
       `INSERT INTO status_history (request_id, from_status, to_status, actor, note, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`
-    ).run(requestId, current.status, toStatus, actor, note ?? null, now);
+       VALUES ($1, $2, $3, $4, $5, now())`,
+      [requestId, from.status, toStatus, actor, note ?? null]
+    );
   });
-  tx();
 }
 
-export function insertFeedback(input: {
+export async function insertFeedback(input: {
   requestId: string;
   rating?: number | null;
   comment?: string | null;
-}): void {
-  getDb()
-    .prepare(
-      `INSERT INTO feedback (request_id, rating, comment, created_at)
-       VALUES (?, ?, ?, ?)`
-    )
-    .run(
-      input.requestId,
-      input.rating ?? null,
-      input.comment ?? null,
-      new Date().toISOString()
-    );
+}): Promise<void> {
+  await query(
+    `INSERT INTO feedback (request_id, rating, comment, created_at)
+     VALUES ($1, $2, $3, now())`,
+    [input.requestId, input.rating ?? null, input.comment ?? null]
+  );
 }
 
 // ---------------------------------------------------------------------------

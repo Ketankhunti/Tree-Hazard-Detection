@@ -16,7 +16,7 @@ export async function GET(
   _request: Request,
   { params }: { params: { id: string } }
 ) {
-  const image = getImage(params.id);
+  const image = await getImage(params.id);
   if (!image) {
     return NextResponse.json({ error: "Image not found" }, { status: 404 });
   }

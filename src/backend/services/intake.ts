@@ -3,7 +3,6 @@ import crypto from "node:crypto";
 import { z } from "zod";
 
 import { classifyComplaint, fuseClassification } from "@/backend/domain/scoring";
-import { getDb } from "@/backend/db/client";
 import {
   findDuplicateCandidates,
   pickAutoLink,
@@ -15,6 +14,7 @@ import {
   insertImage,
   insertRequest,
   listOpenRequests,
+  nextReference,
   recordStatusChange,
   saveClassification,
 } from "@/backend/db/repository";
@@ -78,17 +78,6 @@ export interface IntakeResult {
   photoAnalyzed: boolean;
 }
 
-/** Sequential, human-readable reference: HFX-2026-0431. */
-function nextReference(): string {
-  const year = new Date().getFullYear();
-  const row = getDb()
-    .prepare(
-      `SELECT COUNT(*) AS n FROM requests WHERE reference LIKE ?`
-    )
-    .get(`HFX-${year}-%`) as { n: number };
-  return `HFX-${year}-${String(row.n + 1).padStart(4, "0")}`;
-}
-
 /**
  * Crew hours budgeted for the job, from severity.
  *
@@ -120,7 +109,7 @@ export async function submitRequest(
   photo: SubmittedPhoto | null
 ): Promise<IntakeResult> {
   const id = crypto.randomUUID();
-  const reference = nextReference();
+  const reference = await nextReference(new Date().getFullYear());
   const submittedAt = new Date().toISOString();
 
   // --- Location: photo GPS beats the typed address -------------------------
@@ -153,13 +142,13 @@ export async function submitRequest(
       longitude: location.longitude,
       street: location.street,
     },
-    listOpenRequests()
+    await listOpenRequests()
   );
   const autoLink = pickAutoLink(candidates);
   const status: RequestStatus = autoLink ? "Duplicate" : "Submitted";
 
   // --- Persist --------------------------------------------------------------
-  insertRequest({
+  await insertRequest({
     id,
     reference,
     reporterName: input.reporterName,
@@ -177,9 +166,9 @@ export async function submitRequest(
     estimatedHours: estimateHours(classification.dangerScore),
   });
 
-  saveClassification(id, classification);
+  await saveClassification(id, classification);
 
-  recordStatusChange({
+  await recordStatusChange({
     requestId: id,
     fromStatus: null,
     toStatus: "Submitted",
@@ -189,7 +178,7 @@ export async function submitRequest(
   });
 
   if (autoLink) {
-    recordStatusChange({
+    await recordStatusChange({
       requestId: id,
       fromStatus: "Submitted",
       toStatus: "Duplicate",
@@ -202,7 +191,7 @@ export async function submitRequest(
     const imageId = newImageId();
     const filename = filenameFor(imageId, photo.mimeType);
     await writeImage(filename, photo.data);
-    insertImage({
+    await insertImage({
       id: imageId,
       requestId: id,
       filename,

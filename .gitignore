@@ -46,3 +46,6 @@ dist
 # runtime data: database + uploaded photos
 /var
 .next
+
+.env
+.env.local
