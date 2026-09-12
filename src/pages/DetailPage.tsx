@@ -1,0 +1,264 @@
+import { useNavigate, useParams } from "react-router-dom";
+import { ArrowLeft, MapPin, Printer, Calendar, Clock, Camera, AlertTriangle, ShieldCheck, Eye } from "lucide-react";
+import { mockTrees } from "../data/mockTrees";
+import { scoreComplaint } from "../lib/scoringEngine";
+import { PriorityBadge, ReviewBadge } from "../components/PriorityBadge";
+import { AssessmentBreakdown } from "../components/AssessmentBreakdown";
+import { HazardTag } from "../components/HazardTag";
+import { HazardPoster } from "../components/HazardPoster";
+
+export function DetailPage() {
+  const { id } = useParams();
+  const navigate = useNavigate();
+
+  const complaint = mockTrees.find((c) => c.id === id);
+  if (!complaint) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-gray-500">Complaint not found.</p>
+          <button
+            className="mt-4 rounded border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+            onClick={() => navigate("/")}
+          >
+            Back to Queue
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const scored = scoreComplaint(complaint);
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <header className="no-print border-b border-gray-200 bg-white">
+        <div className="mx-auto max-w-7xl px-6 py-4">
+          <div className="flex items-center justify-between">
+            <button
+              className="inline-flex items-center gap-2 text-sm text-gray-600 hover:text-gray-900"
+              onClick={() => navigate("/")}
+            >
+              <ArrowLeft size={16} strokeWidth={2} />
+              Back to Queue
+            </button>
+            <button
+              className="inline-flex items-center gap-2 rounded bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700"
+              onClick={() => window.print()}
+            >
+              <Printer size={16} strokeWidth={2} />
+              Print Poster
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {/* Main Content */}
+      <main className="no-print mx-auto max-w-7xl space-y-6 px-6 py-6">
+        {/* Title */}
+        <div className="border-b border-gray-200 pb-4">
+          <h1 className="text-2xl font-bold text-gray-900">Tree Hazard Assessment</h1>
+          <p className="text-sm text-gray-500">{complaint.id}</p>
+        </div>
+
+        {/* Key Info Grid */}
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+          <div className="rounded-lg border border-gray-200 bg-white p-3">
+            <p className="text-xs uppercase tracking-wide text-gray-500">Address</p>
+            <p className="text-sm font-semibold text-gray-900">{complaint.address}</p>
+          </div>
+          <div className="rounded-lg border border-gray-200 bg-white p-3">
+            <p className="text-xs uppercase tracking-wide text-gray-500">Neighborhood</p>
+            <p className="text-sm font-semibold text-gray-900">{complaint.neighborhood}</p>
+          </div>
+          <div className="rounded-lg border border-gray-200 bg-white p-3">
+            <p className="text-xs uppercase tracking-wide text-gray-500">Priority</p>
+            <div className="mt-1"><PriorityBadge priority={scored.priority} /></div>
+          </div>
+          <div className="rounded-lg border border-gray-200 bg-white p-3">
+            <p className="text-xs uppercase tracking-wide text-gray-500">Final Score</p>
+            <p className="text-lg font-bold text-gray-900">{scored.scores.finalScore}</p>
+          </div>
+          <div className="rounded-lg border border-gray-200 bg-white p-3">
+            <p className="text-xs uppercase tracking-wide text-gray-500">Danger Score</p>
+            <p className="text-lg font-bold text-red-600">{scored.scores.dangerScore}</p>
+          </div>
+          <div className="rounded-lg border border-gray-200 bg-white p-3">
+            <p className="text-xs uppercase tracking-wide text-gray-500">Days Waiting</p>
+            <p className="text-lg font-bold text-gray-900">{complaint.daysWaiting}</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          {/* Left Column */}
+          <div className="space-y-6">
+            {/* Complaint Text */}
+            <div className="rounded-lg border border-gray-200 bg-white p-5">
+              <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-gray-700">Complaint</h2>
+              <p className="text-gray-800 leading-relaxed italic">"{complaint.complaintText}"</p>
+              <div className="mt-3 flex items-center gap-4 text-xs text-gray-500">
+                <span className="inline-flex items-center gap-1">
+                  <Calendar size={12} /> {complaint.submittedDate}
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <Clock size={12} /> {complaint.daysWaiting} days waiting
+                </span>
+                <ReviewBadge status={scored.reviewStatus} />
+              </div>
+            </div>
+
+            {/* AI Assessment */}
+            <div className="rounded-lg border border-gray-200 bg-white p-5">
+              <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-gray-700">
+                Why This Was Prioritized
+              </h2>
+              <p className="text-sm text-gray-700 leading-relaxed">{scored.reasoning}</p>
+            </div>
+
+            {/* Text-Image Conflict Warning */}
+            {scored.textImageConflict && (
+              <div className="rounded-lg border-2 border-amber-400 bg-amber-50 p-4">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle size={20} className="mt-0.5 shrink-0 text-amber-600" />
+                  <div>
+                    <h3 className="text-sm font-bold text-amber-900">Text-Image Conflict Detected</h3>
+                    <p className="mt-1 text-sm text-amber-800">
+                      The citizen's description does not match the field photo evidence. The danger score has been weighted toward the photo to prevent exaggeration. This complaint should be reviewed carefully.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Hazards */}
+            <div className="rounded-lg border border-gray-200 bg-white p-5">
+              <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-gray-700">
+                Hazards Detected
+              </h2>
+              {scored.hazards.length > 0 ? (
+                <div className="space-y-3">
+                  {/* Group by source */}
+                  {scored.hazards.some((h) => h.source === "text") && (
+                    <div>
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-orange-600">From Text Description</p>
+                      <div className="flex flex-wrap gap-2">
+                        {scored.hazards.filter((h) => h.source === "text").map((h, i) => (
+                          <HazardTag key={`t-${i}`} label={h.label} />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {scored.hazards.some((h) => h.source === "image") && (
+                    <div>
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-red-600">From Field Photo</p>
+                      <div className="flex flex-wrap gap-2">
+                        {scored.hazards.filter((h) => h.source === "image").map((h, i) => (
+                          <HazardTag key={`i-${i}`} label={h.label} />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-sm text-gray-500 italic">
+                  No specific hazards detected from complaint text or field photo.
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* Right Column */}
+          <div className="space-y-6">
+            {/* Score Breakdown */}
+            <div className="rounded-lg border border-gray-200 bg-white p-5">
+              <h2 className="mb-4 text-sm font-bold uppercase tracking-wide text-gray-700">
+                Scoring Breakdown
+              </h2>
+              <AssessmentBreakdown scores={scored.scores} />
+            </div>
+
+            {/* Map Placeholder */}
+            <div className="rounded-lg border border-gray-200 bg-white p-5">
+              <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-gray-700">
+                Inspection Location
+              </h2>
+              <div className="relative h-48 overflow-hidden rounded border border-gray-200 bg-gray-100">
+                {/* Stylized street grid */}
+                <svg className="absolute inset-0 h-full w-full" viewBox="0 0 400 200">
+                  <defs>
+                    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+                      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#d1d5db" strokeWidth="1" />
+                    </pattern>
+                  </defs>
+                  <rect width="100%" height="100%" fill="url(#grid)" />
+                  <line x1="0" y1="100" x2="400" y2="100" stroke="#9ca3af" strokeWidth="2" />
+                  <line x1="200" y1="0" x2="200" y2="200" stroke="#9ca3af" strokeWidth="2" />
+                  <line x1="0" y1="50" x2="400" y2="50" stroke="#d1d5db" strokeWidth="1.5" />
+                  <line x1="0" y1="150" x2="400" y2="150" stroke="#d1d5db" strokeWidth="1.5" />
+                  <line x1="100" y1="0" x2="100" y2="200" stroke="#d1d5db" strokeWidth="1.5" />
+                  <line x1="300" y1="0" x2="300" y2="200" stroke="#d1d5db" strokeWidth="1.5" />
+                </svg>
+                {/* Pin */}
+                <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-full">
+                  <MapPin size={32} className="text-red-600 fill-red-500" strokeWidth={1.5} />
+                </div>
+                <div className="absolute bottom-2 left-2 rounded bg-white/90 px-2 py-1 text-xs font-medium text-gray-700">
+                  {complaint.address}
+                </div>
+              </div>
+              <p className="mt-2 text-xs text-gray-500">
+                {complaint.latitude.toFixed(4)}, {complaint.longitude.toFixed(4)}
+              </p>
+            </div>
+
+            {/* Field Photo + Image Analysis */}
+            <div className="rounded-lg border border-gray-200 bg-white p-5">
+              <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-gray-700">
+                Field Photo & AI Analysis
+              </h2>
+              <div className="flex h-40 items-center justify-center rounded border border-dashed border-gray-300 bg-gray-50">
+                <div className="text-center">
+                  <Camera size={32} className="mx-auto text-gray-300" />
+                  <p className="mt-2 text-sm text-gray-400">{complaint.photoUrl ?? "No photo submitted"}</p>
+                </div>
+              </div>
+              {scored.imageDetection && (
+                <div className="mt-4 space-y-3">
+                  {/* Confidence indicator */}
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Image Confidence</span>
+                    <span className={`text-sm font-bold ${scored.imageDetection.confidence > 0.7 ? "text-green-600" : scored.imageDetection.confidence > 0.5 ? "text-amber-600" : "text-red-600"}`}>
+                      {Math.round(scored.imageDetection.confidence * 100)}%
+                    </span>
+                  </div>
+                  {/* Image analysis summary */}
+                  <div className={`rounded border p-3 ${scored.imageDetection.confidence <= 0.5 ? "border-amber-300 bg-amber-50" : "border-gray-200 bg-gray-50"}`}>
+                    <div className="flex items-start gap-2">
+                      {scored.imageDetection.confidence <= 0.5 ? (
+                        <Eye size={16} className="mt-0.5 shrink-0 text-amber-600" />
+                      ) : scored.imageDetection.hazards.length > 0 ? (
+                        <AlertTriangle size={16} className="mt-0.5 shrink-0 text-red-600" />
+                      ) : (
+                        <ShieldCheck size={16} className="mt-0.5 shrink-0 text-green-600" />
+                      )}
+                      <p className="text-sm text-gray-700">{scored.imageDetection.summary}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+              {!scored.imageDetection && (
+                <p className="mt-3 text-sm text-gray-500 italic">
+                  No photo was submitted with this complaint. Assessment is based on text description only.
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      </main>
+
+      {/* Printable Poster */}
+      <HazardPoster complaint={scored} />
+    </div>
+  );
+}

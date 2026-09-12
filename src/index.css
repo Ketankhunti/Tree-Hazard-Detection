@@ -1,0 +1,29 @@
+@import "tailwindcss";
+
+/* ===== Print Styles ===== */
+@media print {
+  @page {
+    size: letter portrait;
+    margin: 0.5in;
+  }
+
+  body * {
+    visibility: hidden;
+  }
+
+  .print-poster,
+  .print-poster * {
+    visibility: visible;
+  }
+
+  .print-poster {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+}
