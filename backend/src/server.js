@@ -375,6 +375,46 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, stats);
     }
 
+    // Geocode Halifax address using Google Maps API
+    if (path === "/api/geocode" && req.method === "GET") {
+      const address = url.searchParams.get("address");
+      if (!address) {
+        return sendError(res, 400, "Address query parameter is required");
+      }
+
+      const apiKey = process.env.VITE_GOOGLE_MAPS_API_KEY || process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        return sendError(res, 503, "Google Maps API key not configured");
+      }
+
+      const result = await getCached(`geocode:${address.toLowerCase().trim()}`, async () => {
+        const queryAddress = address.toLowerCase().includes("halifax")
+          ? address
+          : `${address}, Halifax, NS`;
+        const geoUrl = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(
+          queryAddress
+        )}&key=${apiKey}`;
+        const geoRes = await fetch(geoUrl);
+        const geoData = await geoRes.json();
+        if (geoData.status !== "OK" || !geoData.results?.length) {
+          return null;
+        }
+        const item = geoData.results[0];
+        const loc = item.geometry.location;
+        return {
+          formattedAddress: item.formatted_address,
+          latitude: loc.lat,
+          longitude: loc.lng,
+        };
+      });
+
+      if (!result) {
+        return sendError(res, 404, "Address could not be geocoded");
+      }
+
+      return sendJson(res, 200, result);
+    }
+
     // Unknown endpoint
     return sendError(res, 404, `Endpoint not found: ${path}`);
   } catch (err) {

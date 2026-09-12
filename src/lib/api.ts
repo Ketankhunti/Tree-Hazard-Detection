@@ -174,3 +174,53 @@ export async function submitComplaint(input: {
   }
   return res.json();
 }
+
+export interface GeocodeResult {
+  formattedAddress: string;
+  latitude: number;
+  longitude: number;
+}
+
+/**
+ * Geocode a Halifax street address using the backend proxy or client-side Google Maps API.
+ */
+export async function geocodeAddress(address: string): Promise<GeocodeResult | null> {
+  if (!address.trim()) return null;
+
+  // 1. Try backend proxy first
+  try {
+    const res = await fetch(`${API_BASE}/geocode?address=${encodeURIComponent(address)}`, {
+      signal: AbortSignal.timeout(6000),
+    });
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch {
+    // Fall back to direct client request
+  }
+
+  // 2. Direct client-side Google Maps Geocoding fallback
+  const clientKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
+  if (clientKey) {
+    try {
+      const query = address.toLowerCase().includes("halifax") ? address : `${address}, Halifax, NS`;
+      const res = await fetch(
+        `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(query)}&key=${clientKey}`,
+        { signal: AbortSignal.timeout(6000) }
+      );
+      const data = await res.json();
+      if (data.status === "OK" && data.results?.[0]) {
+        const item = data.results[0];
+        return {
+          formattedAddress: item.formatted_address,
+          latitude: item.geometry.location.lat,
+          longitude: item.geometry.location.lng,
+        };
+      }
+    } catch (err) {
+      console.warn("Client geocoding failed:", getErrorMessage(err));
+    }
+  }
+
+  return null;
+}

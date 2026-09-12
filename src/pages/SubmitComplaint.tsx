@@ -10,7 +10,7 @@ import {
   Loader2,
   X,
 } from "lucide-react";
-import { submitComplaint } from "../lib/api";
+import { submitComplaint, geocodeAddress } from "../lib/api";
 
 const HALIFAX_NEIGHBORHOODS = [
   "Downtown",
@@ -47,9 +47,39 @@ export function SubmitComplaint() {
   const [photos, setPhotos] = useState<File[]>([]);
   const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [geocoding, setGeocoding] = useState(false);
+  const [geocodeSuccess, setGeocodeSuccess] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [submittedId, setSubmittedId] = useState<string | null>(null);
+
+  async function handleGeocodeAddress() {
+    if (!formData.address.trim()) {
+      setError("Please enter a street address first.");
+      return;
+    }
+    setGeocoding(true);
+    setError(null);
+    setGeocodeSuccess(null);
+    try {
+      const geo = await geocodeAddress(formData.address);
+      if (geo) {
+        setFormData((prev) => ({
+          ...prev,
+          latitude: geo.latitude.toFixed(6),
+          longitude: geo.longitude.toFixed(6),
+          address: geo.formattedAddress.replace(/, Canada$/, ""),
+        }));
+        setGeocodeSuccess(`Location mapped: ${geo.latitude.toFixed(4)}, ${geo.longitude.toFixed(4)}`);
+      } else {
+        setError("Could not geocode this address. You can enter coordinates manually or use device location.");
+      }
+    } catch {
+      setError("Address lookup failed. Please enter coordinates manually.");
+    } finally {
+      setGeocoding(false);
+    }
+  }
 
   function handleTextChange(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) {
     setFormData((prev) => ({ ...prev, [e.target.name]: e.target.value }));
@@ -200,17 +230,36 @@ export function SubmitComplaint() {
             </h2>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700">
-                  Street Address <span className="text-red-500">*</span>
-                </label>
+                <div className="flex items-center justify-between">
+                  <label className="block text-sm font-medium text-gray-700">
+                    Street Address <span className="text-red-500">*</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleGeocodeAddress}
+                    disabled={geocoding || !formData.address.trim()}
+                    className="inline-flex items-center gap-1 text-xs font-medium text-green-700 hover:text-green-800 disabled:opacity-40"
+                  >
+                    {geocoding ? <Loader2 size={12} className="animate-spin" /> : <MapPin size={12} />}
+                    {geocoding ? "Locating on Map…" : "Locate with Google Maps"}
+                  </button>
+                </div>
                 <input
                   type="text"
                   name="address"
                   value={formData.address}
                   onChange={handleTextChange}
-                  placeholder="e.g. 1234 Quinpool Rd"
+                  onBlur={() => {
+                    if (formData.address.trim() && !formData.latitude) {
+                      handleGeocodeAddress();
+                    }
+                  }}
+                  placeholder="e.g. 1234 Quinpool Rd, Halifax"
                   className="mt-1 block w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
                 />
+                {geocodeSuccess && (
+                  <p className="mt-1 text-xs text-green-700 font-medium">✓ {geocodeSuccess}</p>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700">Neighborhood</label>
@@ -257,8 +306,18 @@ export function SubmitComplaint() {
                   />
                 </div>
                 <p className="mt-1 text-xs text-gray-400">
-                  Optional — helps officers find the exact tree. Click "Use my location" for auto-fill.
+                  Optional — helps officers find the exact tree. Enter an address and click "Locate with Google Maps".
                 </p>
+
+                {formData.latitude && formData.longitude && import.meta.env.VITE_GOOGLE_MAPS_API_KEY && (
+                  <div className="mt-3 overflow-hidden rounded border border-gray-200">
+                    <img
+                      src={`https://maps.googleapis.com/maps/api/staticmap?center=${formData.latitude},${formData.longitude}&zoom=16&size=600x180&scale=2&maptype=roadmap&markers=color:green%7C${formData.latitude},${formData.longitude}&key=${import.meta.env.VITE_GOOGLE_MAPS_API_KEY}`}
+                      alt="Pinned tree hazard location"
+                      className="h-36 w-full object-cover"
+                    />
+                  </div>
+                )}
               </div>
             </div>
           </div>

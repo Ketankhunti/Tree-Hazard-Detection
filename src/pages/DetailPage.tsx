@@ -257,38 +257,61 @@ export function DetailPage() {
               <AssessmentBreakdown scores={scored.scores} />
             </div>
 
-            {/* Map Placeholder */}
+            {/* Inspection Location */}
             <div className="rounded-lg border border-gray-200 bg-white p-5">
-              <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-gray-700">
-                Inspection Location
-              </h2>
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="text-sm font-bold uppercase tracking-wide text-gray-700">
+                  Inspection Location
+                </h2>
+                <a
+                  href={`https://www.google.com/maps/search/?api=1&query=${complaint.latitude},${complaint.longitude}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-xs font-medium text-green-700 hover:text-green-800 hover:underline"
+                >
+                  <MapPin size={12} /> Open in Google Maps ↗
+                </a>
+              </div>
               <div className="relative h-48 overflow-hidden rounded border border-gray-200 bg-gray-100">
-                {/* Stylized street grid */}
-                <svg className="absolute inset-0 h-full w-full" viewBox="0 0 400 200">
-                  <defs>
-                    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-                      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#d1d5db" strokeWidth="1" />
-                    </pattern>
-                  </defs>
-                  <rect width="100%" height="100%" fill="url(#grid)" />
-                  <line x1="0" y1="100" x2="400" y2="100" stroke="#9ca3af" strokeWidth="2" />
-                  <line x1="200" y1="0" x2="200" y2="200" stroke="#9ca3af" strokeWidth="2" />
-                  <line x1="0" y1="50" x2="400" y2="50" stroke="#d1d5db" strokeWidth="1.5" />
-                  <line x1="0" y1="150" x2="400" y2="150" stroke="#d1d5db" strokeWidth="1.5" />
-                  <line x1="100" y1="0" x2="100" y2="200" stroke="#d1d5db" strokeWidth="1.5" />
-                  <line x1="300" y1="0" x2="300" y2="200" stroke="#d1d5db" strokeWidth="1.5" />
-                </svg>
-                {/* Pin */}
-                <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-full">
-                  <MapPin size={32} className="text-red-600 fill-red-500" strokeWidth={1.5} />
-                </div>
-                <div className="absolute bottom-2 left-2 rounded bg-white/90 px-2 py-1 text-xs font-medium text-gray-700">
+                {import.meta.env.VITE_GOOGLE_MAPS_API_KEY ? (
+                  <img
+                    src={`https://maps.googleapis.com/maps/api/staticmap?center=${complaint.latitude},${complaint.longitude}&zoom=16&size=600x300&scale=2&maptype=roadmap&markers=color:red%7C${complaint.latitude},${complaint.longitude}&key=${import.meta.env.VITE_GOOGLE_MAPS_API_KEY}`}
+                    alt={`Map of ${complaint.address}`}
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <>
+                    {/* Stylized street grid */}
+                    <svg className="absolute inset-0 h-full w-full" viewBox="0 0 400 200">
+                      <defs>
+                        <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+                          <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#d1d5db" strokeWidth="1" />
+                        </pattern>
+                      </defs>
+                      <rect width="100%" height="100%" fill="url(#grid)" />
+                      <line x1="0" y1="100" x2="400" y2="100" stroke="#9ca3af" strokeWidth="2" />
+                      <line x1="200" y1="0" x2="200" y2="200" stroke="#9ca3af" strokeWidth="2" />
+                      <line x1="0" y1="50" x2="400" y2="50" stroke="#d1d5db" strokeWidth="1.5" />
+                      <line x1="0" y1="150" x2="400" y2="150" stroke="#d1d5db" strokeWidth="1.5" />
+                      <line x1="100" y1="0" x2="100" y2="200" stroke="#d1d5db" strokeWidth="1.5" />
+                      <line x1="300" y1="0" x2="300" y2="200" stroke="#d1d5db" strokeWidth="1.5" />
+                    </svg>
+                    {/* Pin */}
+                    <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-full">
+                      <MapPin size={32} className="text-red-600 fill-red-500" strokeWidth={1.5} />
+                    </div>
+                  </>
+                )}
+                <div className="absolute bottom-2 left-2 rounded bg-white/90 px-2 py-1 text-xs font-medium text-gray-700 shadow-sm">
                   {complaint.address}
                 </div>
               </div>
-              <p className="mt-2 text-xs text-gray-500">
-                {complaint.latitude.toFixed(4)}, {complaint.longitude.toFixed(4)}
-              </p>
+              <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
+                <span>{complaint.latitude.toFixed(4)}, {complaint.longitude.toFixed(4)}</span>
+                <span className="text-gray-400">
+                  {import.meta.env.VITE_GOOGLE_MAPS_API_KEY ? "Google Maps Static View" : "Offline Grid Fallback"}
+                </span>
+              </div>
             </div>
 
             {/* Field Photo + Image Analysis */}
