@@ -8,10 +8,10 @@ import { OPEN_STATUSES, REQUEST_STATUSES, type RequestStatus } from "@/shared/ty
 /**
  * Crew actions on a request.
  *
- * Until the admin console is gated (T12) there is no signed-in user, so every
- * change is attributed to a single operations actor. The `status_history` table
- * already records an actor per row, so adding real identities later is a
- * one-line change here rather than a schema migration.
+ * The console is gated by a single shared staff account, so there is still only
+ * one actor to attribute a change to. The `status_history` table already records
+ * an actor per row, so per-person identities become a one-line change here
+ * rather than a schema migration.
  */
 const ACTOR = "Urban Forestry Operations";
 

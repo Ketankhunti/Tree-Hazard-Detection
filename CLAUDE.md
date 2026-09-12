@@ -37,17 +37,23 @@ src/
     domain/scoring.ts    hazard rules, classification, fusion, escalation
     domain/bundling.ts   same-day work planner
     domain/duplicates.ts same-tree detection
-    services/            intake, vision, geocode, exif, storage
+    services/            intake, vision, geocode, staticmap, auth, exif, storage
     seed/                fixtures + seeder (dev tooling)
   shared/      safe in both bundles. Pure data and helpers, no I/O.
     types.ts             domain types, incl. the server->client prop shapes
     scoring-config.ts    WEIGHTS, priority bands — the displayed contract
     geo.ts               distance maths and formatting
+    map.ts               Web Mercator projection for the basemap overlay
   frontend/    React only.
     components/
     styles/globals.css
   app/         Next.js routing only. Pages compose; they do not hold logic.
+  middleware.ts          the /admin gate — covers pages AND server actions
 ```
+
+**Routes.** `/` is the resident form and is public. Everything under `/admin` is
+behind the staff sign-in at `/admin/login`. `/report/<reference>` is the resident
+confirmation page and stays public — a resident has no account.
 
 **The one rule:** `frontend/` must never import from `backend/`. If a component
 needs a value the engine owns, that value belongs in `shared/`. This is why
@@ -106,6 +112,40 @@ per hour of shift consumed, discounted by a 400m-half-life proximity factor.
 Because a Critical removal is 5-6h of an 8h shift, the planner reports two
 groups: what fits today, and the follow-up trip.
 
+## Maps and location
+
+**The Google Maps key is server-only.** It drives the Geocoding API and the Maps
+Static API. Never expose it with a `NEXT_PUBLIC_` prefix: basemap rasters reach
+the browser through `/api/map`, which attaches the key server-side. Every URL that
+route accepts is HMAC-signed, so the proxy cannot be turned into free image
+hosting billed to HRM.
+
+**Google draws the streets; we draw the markers.** Priority colour, driving order
+and today-vs-follow-up are the reason the map exists, and Google's marker
+parameters cannot express them. That split only works because `shared/map.ts`
+reproduces Google's Web Mercator projection exactly — the same viewport builds
+the image URL on the server and the pixel positions on the client. `map.test.ts`
+pins it against great-circle distance; a drift here moves pins to the wrong block
+while still looking plausible.
+
+**An `APPROXIMATE` geocode is discarded, not stored.** It is a locality centroid,
+so every address Google cannot recognise resolves to the same downtown point.
+Keeping those would stack unrelated reports inside the 90 m duplicate radius and
+merge them into one tree. Fall through to the gazetteer, or to no coordinates at
+all and a manual pin.
+
+## Access
+
+`/` is public; `/admin` is not. The gate is `src/middleware.ts`, not a per-page
+check, because status changes POST back to the same routes — a page-level guard
+would leave the server actions reachable. One shared staff account
+(`ADMIN_USERNAME` / `ADMIN_PASSWORD`, default `admin` / `admin`) and an
+HMAC-signed cookie that expires after a shift; no session store, so nothing
+breaks when the app runs on more than one instance.
+
+Reporting a hazard must never require an account. Keep the resident form and the
+`/report/<reference>` confirmation outside the matcher.
+
 ## Conventions
 
 - Comments explain **why**, not what. Non-obvious tradeoffs get a short note;
@@ -163,5 +203,7 @@ Letter portrait, 0.5in margins; the poster is 7.5in wide and must stay inside
 ## Status
 
 See `task.md` for per-task status. Done: T1-T5, T7-T10. Partial: T6 (no admin UI
-to confirm/reject suggested duplicates), T11 (feedback stored, no email sent).
-Not started: T12 — **`/admin` is currently open to anyone.**
+to confirm/reject suggested duplicates), T11 (feedback stored, no email sent),
+T12 (`/admin` is gated; still no rate limiting on public submission, no
+moderation pass, and `/api/images` is unauthenticated because the resident
+confirmation page needs it).

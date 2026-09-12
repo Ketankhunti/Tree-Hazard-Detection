@@ -17,7 +17,7 @@ Last updated: 2026-09-12
 | 3 | T9 Map view | ✅ |
 | 3 | T10 Lifecycle and completion | ✅ |
 | 4 | T11 Email and feedback | 🟡 |
-| 5 | T12 Admin gate and abuse controls | ⬜ |
+| 5 | T12 Admin gate and abuse controls | 🟡 |
 
 ---
 
@@ -199,18 +199,27 @@ crew settings in `src/lib/config.ts`
 
 ### T9 · Map view ✅
 
-Offline SVG operations map — no tile service, no API key, no network request.
+Google Static Maps basemap with the symbology drawn over it.
 
-- Equirectangular projection with a cosine correction on longitude, so a metre
-  east and a metre north occupy the same pixels (without it Halifax renders ~30%
-  horizontally stretched and distances read wrong)
+- Streets come from Google; the markers do not. Priority colour, driving order
+  and "today vs follow-up trip" are the whole point of the map and Google's
+  marker parameters cannot express them
+- `shared/map.ts` reproduces Google's Web Mercator projection exactly, so a pin
+  lands on the right block rather than one over. Tested against great-circle
+  distance in `shared/map.test.ts` — if the projection drifts, the pins move to
+  the wrong street while still looking entirely plausible
+- The API key never reaches the browser: the raster is proxied through
+  `/api/map`, and each URL is HMAC-signed so the proxy cannot be used as free
+  image hosting billed to HRM
+- Fitted to the anchor and its recommended jobs, not to the whole open queue —
+  one report across the harbour would shrink the cluster to a single dot
 - Anchor, numbered scheduled jobs with route lines, dashed rings for follow-up
-  work, faint dots for the rest of the open queue
-- Round-number scale bar derived from the projection
-- Labelled "relative positions, not a street map" — the honest description, given
-  the gazetteer only knows street centroids
+  work, faint dots for other open requests that fall inside the frame
+- Round-number scale bar derived from the viewport's own ground resolution
+- Degrades to the previous coordinate-only plot when no API key is configured
 
-Files: `src/components/BundleMap.tsx`
+Files: `src/frontend/components/BundleMap.tsx`, `src/shared/map.ts`,
+`src/backend/services/staticmap.ts`, `src/app/api/map/route.ts`
 
 ### T10 · Lifecycle and completion ✅
 
@@ -231,9 +240,9 @@ closed statuses.
 - Completed work leaves the queue; the detail page switches to a closed state
   and hides the day plan (nothing left to schedule)
 
-Every change is attributed to a single operations actor until T12 adds real
-identities — `status_history` already stores an actor per row, so that is a
-one-line change rather than a migration.
+Every change is attributed to a single operations actor, since the console is
+gated by one shared staff account — `status_history` already stores an actor per
+row, so per-person identities are a one-line change rather than a migration.
 
 Files: `src/app/admin/actions.ts`, `src/components/StatusControl.tsx`
 
@@ -246,10 +255,19 @@ resident email captured and stored, confirmation page promises the notification.
 templates (submission confirmation, completion notice), a feedback capture page
 linked from the completion email, and delivery/bounce handling.
 
-### T12 · Admin gate and abuse controls ⬜
+### T12 · Admin gate and abuse controls 🟡
 
-Not started. `/admin` is currently open to anyone. Also needs rate limiting on
-public submission and a moderation check folded into the vision pass.
+**Done:** `/admin` is gated. One shared staff account (`ADMIN_USERNAME` /
+`ADMIN_PASSWORD`, default `admin` / `admin`) and an HMAC-signed session cookie
+that expires after a shift. The check runs in `src/middleware.ts` rather than in
+each page, so it covers the server actions too — a page-level guard would leave
+the status-change POSTs reachable. The resident form now sits at `/` and stays
+public: reporting a hazard must never require an account.
+
+**Remaining:** real per-person identities (the `status_history` actor column is
+already there), rate limiting on public submission, and a moderation check folded
+into the vision pass. `/api/images` is still unauthenticated — the resident
+confirmation page needs it, so it wants a per-request token rather than a session.
 
 ---
 
@@ -333,5 +351,5 @@ point. That closes the last loop in the original brief — resident submits, cre
 completes, resident is notified and asked for feedback.
 
 Then **T6's remaining half** (an admin UI to confirm or reject suggested
-duplicates), and **T12** before this is shown to anyone outside the team —
-`/admin` is currently open to the world.
+duplicates), and **T12's remaining half** — rate limiting on public submission
+and moderation, now that the console itself is behind a sign-in.

@@ -4,6 +4,7 @@ import { CalendarClock, Info, Route, TriangleAlert } from "lucide-react";
 import { BundleMap } from "./BundleMap";
 import { PriorityBadge } from "./PriorityBadge";
 import { formatDistance } from "@/shared/geo";
+import type { StaticMapImage } from "@/shared/map";
 import type { BundlePlan } from "@/shared/types";
 import type { ScoredRequest } from "@/shared/types";
 
@@ -22,12 +23,15 @@ export function DayPlan({
   plan,
   others,
   ranks,
+  basemap,
 }: {
   plan: BundlePlan;
   others: ScoredRequest[];
   /** Request id -> position in the main queue. Plain data so it can cross
    *  the server/client boundary. */
   ranks: Record<string, number>;
+  /** Signed Google basemap for the map; null when unconfigured. */
+  basemap: StaticMapImage | null;
 }) {
   const bundled = plan.selected.map((candidate) => candidate.request);
   const followUpRequests = plan.followUp.map((candidate) => candidate.request);
@@ -106,6 +110,7 @@ export function DayPlan({
               bundled={bundled}
               followUp={followUpRequests}
               others={others}
+              basemap={basemap}
             />
           </div>
 

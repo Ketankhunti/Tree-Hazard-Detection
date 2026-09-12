@@ -116,7 +116,7 @@ export default async function ReportConfirmationPage({
         </div>
 
         <p className="mt-6 text-sm">
-          <Link href="/report" className="font-semibold text-slate-700 underline">
+          <Link href="/" className="font-semibold text-slate-700 underline">
             Report another tree
           </Link>
         </p>

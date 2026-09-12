@@ -18,6 +18,7 @@ import { HazardTag } from "./HazardTag";
 import { PhotoAssessment } from "./PhotoAssessment";
 import { PriorityBadge, ReviewBadge } from "./PriorityBadge";
 import { StatusControl } from "./StatusControl";
+import type { StaticMapImage } from "@/shared/map";
 import type { BundlePlan } from "@/shared/types";
 import type {
   Feedback,
@@ -26,38 +27,77 @@ import type {
   StatusChange,
 } from "@/shared/types";
 
-/** Stylized street grid + pin. Deliberately not a real mapping dependency. */
-function MapPlaceholder({ request }: { request: ScoredRequest }) {
-  return (
-    <div className="relative aspect-[4/3] w-full overflow-hidden border border-slate-200 bg-slate-100">
-      <svg
-        className="absolute inset-0 h-full w-full"
-        viewBox="0 0 200 150"
-        preserveAspectRatio="none"
-        aria-hidden
-      >
-        <rect width="200" height="150" fill="#f1f5f9" />
-        {[18, 52, 86, 120].map((y) => (
-          <rect key={y} x="0" y={y} width="200" height="9" fill="#e2e8f0" />
-        ))}
-        {[26, 74, 122, 170].map((x) => (
-          <rect key={x} x={x} y="0" width="9" height="150" fill="#e2e8f0" />
-        ))}
-        <rect x="80" y="24" width="36" height="24" fill="#e7e5e4" stroke="#d6d3d1" />
-        <rect x="128" y="60" width="34" height="22" fill="#e7e5e4" stroke="#d6d3d1" />
-        <rect x="36" y="94" width="30" height="22" fill="#e7e5e4" stroke="#d6d3d1" />
-        <rect x="128" y="96" width="34" height="20" fill="#dcfce7" stroke="#bbf7d0" />
-      </svg>
+/**
+ * Where the inspection is.
+ *
+ * Google basemap when a key is configured, and a stylized grid when it is not -
+ * the pin is drawn here either way, centred because the viewport was built
+ * around this request's coordinates.
+ */
+function LocationMap({
+  request,
+  basemap,
+}: {
+  request: ScoredRequest;
+  basemap: StaticMapImage | null;
+}) {
+  const located = request.latitude !== null && request.longitude !== null;
 
-      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-full">
-        <MapPin className="h-8 w-8 fill-red-600 text-white drop-shadow" aria-hidden />
+  return (
+    <div className="border border-slate-200">
+      <div
+        className="relative w-full overflow-hidden bg-slate-100"
+        style={{
+          aspectRatio: basemap
+            ? `${basemap.viewport.width} / ${basemap.viewport.height}`
+            : "4 / 3",
+        }}
+      >
+        {basemap ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={basemap.src}
+            alt={`Map of ${request.address}`}
+            className="absolute inset-0 h-full w-full object-cover"
+          />
+        ) : (
+          <svg
+            className="absolute inset-0 h-full w-full"
+            viewBox="0 0 200 150"
+            preserveAspectRatio="none"
+            aria-hidden
+          >
+            <rect width="200" height="150" fill="#f1f5f9" />
+            {[18, 52, 86, 120].map((y) => (
+              <rect key={y} x="0" y={y} width="200" height="9" fill="#e2e8f0" />
+            ))}
+            {[26, 74, 122, 170].map((x) => (
+              <rect key={x} x={x} y="0" width="9" height="150" fill="#e2e8f0" />
+            ))}
+            <rect x="80" y="24" width="36" height="24" fill="#e7e5e4" stroke="#d6d3d1" />
+            <rect x="128" y="60" width="34" height="22" fill="#e7e5e4" stroke="#d6d3d1" />
+            <rect x="36" y="94" width="30" height="22" fill="#e7e5e4" stroke="#d6d3d1" />
+            <rect x="128" y="96" width="34" height="20" fill="#dcfce7" stroke="#bbf7d0" />
+          </svg>
+        )}
+
+        {located && (
+          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-full">
+            <MapPin
+              className="h-8 w-8 fill-red-600 text-white drop-shadow"
+              aria-hidden
+            />
+          </div>
+        )}
       </div>
 
-      <div className="absolute inset-x-0 bottom-0 bg-white/95 px-3 py-2">
+      {/* Below the raster, not over it: Google's attribution sits along the
+          bottom edge of the image and has to stay legible. */}
+      <div className="border-t border-slate-200 bg-white px-3 py-2">
         <p className="text-xs font-semibold text-slate-900">{request.address}</p>
         <p className="font-mono text-[10px] text-slate-500">
-          {request.latitude !== null && request.longitude !== null
-            ? `${request.latitude.toFixed(4)}, ${request.longitude.toFixed(4)} · ${request.locationSource}`
+          {located
+            ? `${request.latitude!.toFixed(4)}, ${request.longitude!.toFixed(4)} · ${request.locationSource}`
             : "No coordinates on file"}
         </p>
       </div>
@@ -84,6 +124,8 @@ export function RequestDetail({
   otherOpen,
   queueRank,
   ranks,
+  locationMap,
+  bundleMap,
 }: {
   request: ScoredRequest;
   images: RequestImage[];
@@ -95,6 +137,9 @@ export function RequestDetail({
   otherOpen: ScoredRequest[];
   queueRank: number | null;
   ranks: Record<string, number>;
+  /** Signed basemaps built on the server; null when Google Maps is unconfigured. */
+  locationMap: StaticMapImage | null;
+  bundleMap: StaticMapImage | null;
 }) {
   const { assessment } = request;
 
@@ -218,7 +263,14 @@ export function RequestDetail({
               </div>
             </section>
 
-            {plan && <DayPlan plan={plan} others={otherOpen} ranks={ranks} />}
+            {plan && (
+              <DayPlan
+                plan={plan}
+                others={otherOpen}
+                ranks={ranks}
+                basemap={bundleMap}
+              />
+            )}
 
             <PhotoAssessment assessment={assessment} />
 
@@ -280,7 +332,7 @@ export function RequestDetail({
                 <MapPin className="h-4 w-4 text-slate-400" aria-hidden />
                 Inspection Location
               </h2>
-              <MapPlaceholder request={request} />
+              <LocationMap request={request} basemap={locationMap} />
             </section>
 
             <section className="panel p-4">

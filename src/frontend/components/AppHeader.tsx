@@ -1,5 +1,7 @@
 import Link from "next/link";
-import { TreePine } from "lucide-react";
+import { LogOut, TreePine } from "lucide-react";
+
+import { signOut } from "@/app/admin/login/actions";
 
 export function AppHeader({ status }: { status?: string }) {
   return (
@@ -21,7 +23,7 @@ export function AppHeader({ status }: { status?: string }) {
 
         <div className="flex items-center gap-3">
           <Link
-            href="/report"
+            href="/"
             className="border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-100"
           >
             Public report form
@@ -34,6 +36,15 @@ export function AppHeader({ status }: { status?: string }) {
             </span>
             </div>
           )}
+          <form action={signOut}>
+            <button
+              type="submit"
+              className="inline-flex items-center gap-1.5 border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-100"
+            >
+              <LogOut className="h-3.5 w-3.5" aria-hidden />
+              Sign out
+            </button>
+          </form>
         </div>
       </div>
     </header>

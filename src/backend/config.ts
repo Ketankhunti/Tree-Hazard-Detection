@@ -14,19 +14,47 @@ export const config = {
   visionModel: process.env.VISION_MODEL ?? "claude-opus-5",
 
   /**
-   * Live geocoding. Optional on purpose - the local Halifax gazetteer resolves
-   * the known streets with no network call, so a demo never depends on a
-   * third-party service being reachable.
+   * Google Maps Platform key, used for both Geocoding and the Static Maps
+   * basemap. Optional on purpose - the local Halifax gazetteer resolves the
+   * known streets with no network call and the maps fall back to a coordinate
+   * plot, so a demo never depends on a third-party service being reachable.
+   *
+   * Requires the Geocoding API and the Maps Static API to be enabled on the
+   * project.
    *
    * Read server-side only. Do NOT rename this with a NEXT_PUBLIC_ prefix: that
-   * would ship the key in the browser bundle where anyone can spend it.
+   * would ship the key in the browser bundle where anyone can spend it. Map
+   * imagery reaches the browser through /api/map instead.
    */
   googleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY ?? null,
+
+  /**
+   * Signs /api/map URLs so the proxy cannot be used as a free image service.
+   * Defaults to the API key, which is already a server-only secret.
+   */
+  mapProxySecret: process.env.MAP_PROXY_SECRET ?? null,
 
   /** Nominatim-compatible fallback, used only when no Google key is set. */
   geocoderUrl: process.env.GEOCODER_URL ?? null,
   geocoderUserAgent:
     process.env.GEOCODER_USER_AGENT ?? "halifax-tree-triage/2.0 (demo)",
+
+  /**
+   * Admin console credentials.
+   *
+   * A single hardcoded operator, not a user table: the console has one audience
+   * (HRM Urban Forestry staff) and the point of the gate is that /admin is not
+   * world-readable. Real identities land with the status_history actor column,
+   * which already exists.
+   */
+  admin: {
+    username: process.env.ADMIN_USERNAME ?? "admin",
+    password: process.env.ADMIN_PASSWORD ?? "admin",
+    /** Signs the session cookie. Falls back to a server-only value. */
+    sessionSecret: process.env.ADMIN_SESSION_SECRET ?? null,
+    /** Sessions expire after one shift so a shared depot terminal logs itself out. */
+    sessionHours: Number(process.env.ADMIN_SESSION_HOURS ?? 12),
+  },
 
   crew: {
     /** Length of one crew shift, in hours. */
@@ -55,4 +83,9 @@ export const config = {
 
 export function hasVision(): boolean {
   return config.anthropicApiKey !== null;
+}
+
+/** True when addresses geocode through Google and maps render real streets. */
+export function hasMaps(): boolean {
+  return config.googleMapsApiKey !== null;
 }
