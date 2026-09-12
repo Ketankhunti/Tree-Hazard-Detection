@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { TreePine } from "lucide-react";
 
-import { ReportForm } from "@/components/ReportForm";
+import { ReportForm } from "@/frontend/components/ReportForm";
 
 export const metadata = {
   title: "Report a tree | Halifax Urban Forestry",

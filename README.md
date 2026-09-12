@@ -14,9 +14,21 @@ qualified arborist should look at them in.
 
 ```bash
 npm install
-npm run db:reset   # create the database and seed it
-npm run dev        # http://localhost:5177
+cp .env.example .env.local   # add your Supabase DATABASE_URL
+npm run db:check             # verify the connection (diagnoses Supabase gotchas)
+npm run db:reset             # create the schema and seed it
+npm run dev                  # http://localhost:5177
 ```
+
+The database is **Supabase (PostgreSQL)**. `DATABASE_URL` is the only required
+variable. Two things will bite you, so `npm run db:check` tests for both:
+
+- Use the **Session pooler** string (`aws-0-<region>.pooler.supabase.com:5432`,
+  user `postgres.<ref>`). The direct host `db.<ref>.supabase.co` is **IPv6-only**
+  and fails with `ENOTFOUND` on an IPv4 network — which looks like a bad project
+  ref but isn't.
+- **Do not append `?sslmode=require`.** pg >= 8.23 treats it as `verify-full`,
+  which rejects Supabase's certificate chain. TLS is enabled by the app itself.
 
 - `/report` — public submission form (no login)
 - `/admin` — inspection queue
@@ -40,32 +52,61 @@ Everything is optional — copy `.env.example` to `.env.local` to change any of 
 | `ANTHROPIC_API_KEY` | unset | Enables photo analysis. Without it, text-only. |
 | `VISION_MODEL` | `claude-opus-5` | Model used to assess photos. |
 | `GEOCODER_URL` | unset | Opt-in live geocoding. Off by default so a demo never depends on a third-party service. |
-| `DATABASE_PATH` | `var/app.db` | SQLite file. |
+| `DATABASE_URL` | — | **Required.** Supabase Postgres connection string. |
+| `DATABASE_SSL_STRICT` | `false` | Verify Supabase's TLS certificate chain. |
+| `DATABASE_POOL_MAX` | `10` | Pooled connections held by this process. |
 | `UPLOAD_DIR` | `var/uploads` | Photo storage, outside the web root. |
 
 ## Architecture
 
+Three layers, enforced by one rule: **`frontend/` never imports from
+`backend/`.** Anything both sides need lives in `shared/`.
+
 ```
 src/
-  app/
-    report/                 public submission + confirmation
-    admin/                  inspection queue + request detail
-    api/requests/           intake endpoint (multipart, optional photo)
-    api/images/[id]/        photo serving
-  engine/scoring.ts         pure scoring engine - no React, no I/O
-  lib/
-    db.ts                   SQLite schema + additive migrations
-    repository.ts           every query; snake_case in, camelCase out
-    intake.ts               the submission pipeline
-    vision.ts               photo analysis
-    geocode.ts              address -> coordinates
-    exif.ts                 photo GPS extraction
-    duplicates.ts           same-tree detection
+  backend/                  server-only
+    config.ts               env reading; every value optional
+    db/client.ts            Postgres pool, schema, additive migrations
+    db/repository.ts        every query; snake_case in, camelCase out
+    domain/scoring.ts       hazard rules, classification, fusion, escalation
+    domain/bundling.ts      same-day work planner
+    domain/duplicates.ts    same-tree detection
+    services/               intake, vision, geocode, exif, storage
+    seed/                   engineered demo dataset + seeder
+  shared/                   pure data and helpers, safe in both bundles
+    types.ts                domain types, incl. server -> client prop shapes
+    scoring-config.ts       WEIGHTS and priority bands - the displayed contract
     geo.ts                  distance maths
-    storage.ts              photo files on disk
-  seed/                     engineered demo dataset
-  components/               UI
+  frontend/
+    components/
+    styles/globals.css
+  app/                      Next.js routing only; pages compose, not compute
 ```
+
+`WEIGHTS` and the plan types sit in `shared` because the UI prints them — one
+definition means the number the engine multiplies by is provably the number the
+arborist reads on the sheet.
+
+### Database
+
+Supabase-hosted PostgreSQL, accessed with `pg` (node-postgres) — no ORM, raw SQL
+in `backend/db/repository.ts`. Five tables: `requests`, `assessments`, `images`,
+`status_history`, `feedback`.
+
+Two driver behaviours the repository mappers absorb so callers never see them:
+
+- **`TIMESTAMPTZ` returns a JS `Date`.** The domain speaks ISO strings, so
+  `toIso()` normalises on the way out.
+- **`JSONB` returns already-parsed values** — never `JSON.parse` a jsonb column.
+  On the way *in* it must be `JSON.stringify`'d: node-postgres turns a JS array
+  into a Postgres *array literal*, which a jsonb column rejects, and `hazards`
+  is an array.
+
+`COUNT(*)` comes back as a string (bigint), hence `toCount()`.
+
+Status changes and classification writes run in explicit transactions;
+`setStatus` takes `SELECT ... FOR UPDATE` on the row so two dispatchers closing
+the same job serialise rather than recording a transition that never happened.
 
 ### Classification is stored; scoring is not
 

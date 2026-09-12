@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CheckCircle2, Copy, Mail, TreePine } from "lucide-react";
 
-import { getRequest } from "@/lib/repository";
+import { getRequest } from "@/backend/db/repository";
 
 export const dynamic = "force-dynamic";
 
@@ -13,12 +13,12 @@ export const dynamic = "force-dynamic";
  * dispatch decision, and telling a resident their tree scored "Low" reads as
  * a safety judgement the tool is not making.
  */
-export default function ReportConfirmationPage({
+export default async function ReportConfirmationPage({
   params,
 }: {
   params: { reference: string };
 }) {
-  const request = getRequest(decodeURIComponent(params.reference));
+  const request = await getRequest(decodeURIComponent(params.reference));
   if (!request) notFound();
 
   const isDuplicate = request.status === "Duplicate";

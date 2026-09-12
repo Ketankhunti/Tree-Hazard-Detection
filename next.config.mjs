@@ -1,8 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // better-sqlite3 is a native module: keep it out of the bundler.
+  // node-postgres resolves optional native/driver modules at runtime; keep it
+  // out of the server bundle so the bundler does not try to follow them.
   experimental: {
-    serverComponentsExternalPackages: ["better-sqlite3"],
+    serverComponentsExternalPackages: ["pg"],
   },
 };
 

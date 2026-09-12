@@ -1,13 +1,15 @@
-import { AppHeader } from "@/components/AppHeader";
-import { QueueView } from "@/components/QueueView";
-import { listClosedRequests, listOpenRequests } from "@/lib/repository";
+import { AppHeader } from "@/frontend/components/AppHeader";
+import { QueueView } from "@/frontend/components/QueueView";
+import { listClosedRequests, listOpenRequests } from "@/backend/db/repository";
 
 // Scores depend on "now", so this page must never be statically cached.
 export const dynamic = "force-dynamic";
 
-export default function AdminQueuePage() {
-  const requests = listOpenRequests();
-  const closed = listClosedRequests();
+export default async function AdminQueuePage() {
+  const [requests, closed] = await Promise.all([
+    listOpenRequests(),
+    listClosedRequests(),
+  ]);
 
   return (
     <div className="min-h-screen bg-white">

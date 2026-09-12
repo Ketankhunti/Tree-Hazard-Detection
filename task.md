@@ -13,9 +13,9 @@ Last updated: 2026-09-12
 | 2 | T5 Image-aware severity pipeline | ✅ |
 | 2 | T6 Duplicate detection | 🟡 |
 | 3 | T7 Live admin queue | ✅ |
-| 3 | T8 Same-day bundling | ⬜ |
-| 3 | T9 Map view | ⬜ |
-| 3 | T10 Lifecycle and completion | 🟡 |
+| 3 | T8 Same-day bundling | ✅ |
+| 3 | T9 Map view | ✅ |
+| 3 | T10 Lifecycle and completion | ✅ |
 | 4 | T11 Email and feedback | 🟡 |
 | 5 | T12 Admin gate and abuse controls | ⬜ |
 
@@ -28,10 +28,9 @@ Last updated: 2026-09-12
 Migrated from a client-only Vite SPA to Next.js 14 (App Router) so API routes,
 pages, and file handling live in one app.
 
-- SQLite via `better-sqlite3`, schema applied idempotently on first access
+- Supabase PostgreSQL via `pg`, schema applied idempotently on first query
 - Tables: `requests`, `images`, `assessments`, `status_history`, `feedback`
-- Additive column migrations (`PRAGMA table_info` guard) so an existing database
-  survives new columns
+- Additive migrations via `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`
 - Repository layer — every query lives there; nothing above it sees SQL
 - Photo storage on disk **outside the web root**, served through
   `/api/images/[id]` so an auth check has somewhere to go
@@ -159,32 +158,84 @@ one-page poster.
 Files: `src/app/admin/`, `src/components/QueueView.tsx`, `ComplaintTable.tsx`,
 `FilterBar.tsx`, `RequestDetail.tsx`, `HazardPoster.tsx`
 
-### T8 · Same-day bundling ⬜
+### T8 · Same-day bundling ✅
 
-Not started. Foundations exist: `distanceMeters()` in `src/lib/geo.ts`,
-`estimatedHours` on every request, and seed geography built for it.
+A crew going to Quinpool Road pays the mobilization whether they do one job or
+four. This answers: given they are already there with hours left, what else
+should they clear?
 
-Needs: crew shift budget, a selection algorithm weighing severity *and* travel
-*and* remaining hours together, and a recommendation panel on the selected job.
+**The objective is not "the five nearest."** Nearest-five returns five cosmetic
+prunings on one block while a High-priority tree sits 400 m away. Three things
+are weighed at once — severity (final score), job hours, and travel time —
+ranked by severity earned per hour of shift consumed, then discounted by a
+proximity factor (400 m half-life) so a crew does not leave the area for a
+marginally better job.
 
-> Note: nearest-5 is the wrong objective. It would return five cosmetic jobs
-> while a High-priority tree sits 400 m away.
+**Capacity is not the same as relevance.** A Critical removal is genuinely 5-6 h
+of an 8 h shift, so often only one extra job actually *fits*. Returning a single
+suggestion would be accurate and useless, so the plan reports two groups:
 
-### T9 · Map view ⬜
+- **Scheduled today** — the prefix that fits the remaining hours
+- **Follow-up trip** — the rest of the top 5, already justified by the crew
+  being mobilized nearby
 
-Not started. Currently a stylized SVG placeholder on the detail page. Bundling is
-inherently spatial — a table cannot show why three jobs belong together.
+Greedy fill skips a job that does not fit and tries the next, so one long job
+does not block two short ones behind it. Scheduled work is then re-ordered by
+distance, because the crew is driving, not reading a ranked list.
 
-### T10 · Lifecycle and completion 🟡
+Verified against the seed data:
 
-**Done:** full status enum (`Submitted → Triaged → Scheduled → In Progress →
-Completed | Duplicate | Rejected`), `status_history` table with actor and note,
-`setStatus()` writing row and history in one transaction so the audit trail can
-never disagree with the row, `completed_at` handling, queue excludes closed
-statuses, history rendered on the detail page.
+| Anchor | In range | Recommendations | Queue ranks |
+|---|---|---|---|
+| Quinpool Rd (#1, Critical) | 6 | 5 @ 235–805 m | #6, #9, #13, #14, #16 |
+| Agricola St (#2, Critical) | 9 | 5 @ 205–336 m | #5, #11, #15, #19, #20 |
+| Dutch Village Rd (#3, isolated) | 1 | 1, none fit | #7 |
 
-**Remaining:** no UI. No "Mark complete" button, no status dropdown, no undo. The
-whole server side is ready; this is a button and a server action.
+The recommendations are visibly *not* the next entries in the priority list,
+and the isolated anchor correctly reports that it cannot be combined.
+
+Files: `src/lib/bundling.ts`, `src/components/DayPlan.tsx`,
+crew settings in `src/lib/config.ts`
+
+### T9 · Map view ✅
+
+Offline SVG operations map — no tile service, no API key, no network request.
+
+- Equirectangular projection with a cosine correction on longitude, so a metre
+  east and a metre north occupy the same pixels (without it Halifax renders ~30%
+  horizontally stretched and distances read wrong)
+- Anchor, numbered scheduled jobs with route lines, dashed rings for follow-up
+  work, faint dots for the rest of the open queue
+- Round-number scale bar derived from the projection
+- Labelled "relative positions, not a street map" — the honest description, given
+  the gazetteer only knows street centroids
+
+Files: `src/components/BundleMap.tsx`
+
+### T10 · Lifecycle and completion ✅
+
+**Server (was already done):** full status enum, `status_history` with actor and
+note, `setStatus()` writing row and history in one transaction so the audit
+trail can never disagree with the row, `completed_at` handling, queue excludes
+closed statuses.
+
+**Added:** server actions and UI.
+
+- Status dropdown across the open workflow
+- **Mark complete** as a dedicated button, not one option in a select — it is
+  the action a crew performs many times a day, and burying it makes the common
+  path the slowest one
+- **Reopen** reverts to whatever the request was *before* it closed, by walking
+  `status_history` backwards. A job that was In Progress when someone
+  fat-fingered the button goes back to In Progress, not to Submitted
+- Completed work leaves the queue; the detail page switches to a closed state
+  and hides the day plan (nothing left to schedule)
+
+Every change is attributed to a single operations actor until T12 adds real
+identities — `status_history` already stores an actor per row, so that is a
+one-line change rather than a migration.
+
+Files: `src/app/admin/actions.ts`, `src/components/StatusControl.tsx`
 
 ### T11 · Email and feedback 🟡
 
@@ -201,6 +252,64 @@ Not started. `/admin` is currently open to anyone. Also needs rate limiting on
 public submission and a moderation check folded into the vision pass.
 
 ---
+
+## Database migration — SQLite to Supabase Postgres ✅
+
+Replaced `better-sqlite3` with `pg` pointed at Supabase.
+
+The dialect changes were mechanical (`?` -> `$1`, `AUTOINCREMENT` -> `SERIAL`,
+`REAL` -> `DOUBLE PRECISION`, `INTEGER` flags -> `BOOLEAN`, `TEXT` timestamps ->
+`TIMESTAMPTZ`, JSON text -> `JSONB`). The substantive change was that
+`better-sqlite3` is **synchronous** and `pg` is **asynchronous**, so every
+repository function became `async` and every call site had to be awaited —
+pages, server actions, the intake pipeline and the seeder.
+
+Also gained from the move: real transactions with `SELECT ... FOR UPDATE` in
+`setStatus`, so two dispatchers closing the same job serialise; and a partial
+index on `assessments(request_id) WHERE is_current`, which SQLite could not
+express as cleanly.
+
+**Verified against the live Supabase instance** (PostgreSQL 17.6, us-west-2):
+schema created, 28 requests / 28 assessments / 12 images / 40 status rows / 1
+feedback row seeded, and `/admin` plus a detail page render from Postgres with
+the day plan, escalation notice and poster intact.
+
+Two Supabase-specific bugs were found and fixed by doing this for real:
+
+1. **`sslmode=require` broke every connection.** pg >= 8.23 treats it as
+   `verify-full`, and a connection-string SSL mode overrides the `ssl` option
+   object, so Supabase's chain failed verification regardless of
+   `rejectUnauthorized`. `connectionSettings()` now strips it.
+2. **`tsx` never loaded `.env.local`**, so the seeder could not see
+   `DATABASE_URL`. The db scripts now pass `--env-file`.
+
+Added `npm run db:check`: a diagnostic that names the IPv6 direct-host trap, the
+TLS trap, and auth failures, and auto-discovers the Session pooler region when
+the direct host is unreachable.
+
+## Project structure
+
+Restructured into explicit layers after Phase 3. `src/lib/` previously mixed
+server-only modules (db, repository, vision, intake) with isomorphic ones
+(types, geo), and components imported directly from the engine — there was no
+boundary to enforce.
+
+```
+src/backend/    server-only: config, db, domain, services, seed
+src/shared/     pure: types, scoring-config, geo
+src/frontend/   components + styles
+src/app/        Next.js routing only
+```
+
+**Rule:** `frontend/` never imports from `backend/`. Three violations existed
+before the move and were fixed by relocating what the UI genuinely needs —
+`WEIGHTS` and the `BundlePlan` types — into `shared/` rather than loosening the
+rule. A grep for `@/backend/` under `src/frontend` returns nothing.
+
+Deliberately **not** split into two deployed services: that would add CORS, two
+dev servers and two deploy targets, and break the server components that read
+the database directly — against the project's own "fast local execution, no
+unnecessary infrastructure" constraint.
 
 ## Current state
 
@@ -219,9 +328,10 @@ API key, no network required.
 
 ## Suggested next step
 
-**T10's UI** is the cheapest meaningful win: the server side is already built, so
-a "Mark complete" button closes the loop the brief asks for and makes T11's
-completion email have something to fire on.
+**T11 (email)** now has something to fire on: `markCompleted()` is the hook
+point. That closes the last loop in the original brief — resident submits, crew
+completes, resident is notified and asked for feedback.
 
-Then **T8**, which is the differentiating feature and the largest remaining
-piece of work.
+Then **T6's remaining half** (an admin UI to confirm or reject suggested
+duplicates), and **T12** before this is shown to anyone outside the team —
+`/admin` is currently open to the world.
