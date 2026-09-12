@@ -113,3 +113,57 @@ export async function fetch311Calls(): Promise<Tree311Call[]> {
     return [];
   }
 }
+
+/**
+ * Submit a new tree hazard complaint from the citizen portal.
+ * Sends multipart/form-data if a photo is included, JSON otherwise.
+ */
+export async function submitComplaint(input: {
+  address: string;
+  neighborhood: string;
+  complaintText: string;
+  latitude: number;
+  longitude: number;
+  photo: File | null;
+}): Promise<{ id: string; message: string }> {
+  const hasPhoto = input.photo !== null;
+
+  if (hasPhoto && input.photo) {
+    const formData = new FormData();
+    formData.append("address", input.address);
+    formData.append("neighborhood", input.neighborhood);
+    formData.append("complaintText", input.complaintText);
+    formData.append("latitude", String(input.latitude));
+    formData.append("longitude", String(input.longitude));
+    formData.append("photo", input.photo);
+
+    const res = await fetch(`${API_BASE}/complaints`, {
+      method: "POST",
+      body: formData,
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    return res.json();
+  }
+
+  const res = await fetch(`${API_BASE}/complaints`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      address: input.address,
+      neighborhood: input.neighborhood,
+      complaintText: input.complaintText,
+      latitude: input.latitude,
+      longitude: input.longitude,
+    }),
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+}

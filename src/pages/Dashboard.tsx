@@ -53,14 +53,23 @@ export function Dashboard() {
               <h1 className="text-xl font-bold text-gray-900">Halifax Urban Forestry</h1>
               <p className="text-sm text-gray-500">Tree Hazard Prioritization</p>
             </div>
-            <div className="flex items-center gap-2 text-sm text-gray-500">
-              <span className={`inline-flex h-2 w-2 rounded-full ${source === "backend" ? "bg-green-500" : "bg-amber-500"}`} />
-              {loading ? "Loading…" : `${stats.total} requests analyzed`}
-              {source && !loading && (
-                <span className="ml-1 text-xs text-gray-400">
-                  ({source === "backend" ? "live HRM data" : "demo data"})
-                </span>
-              )}
+            <div className="flex items-center gap-4">
+              <button
+                className="inline-flex items-center gap-1.5 rounded bg-green-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-800"
+                onClick={() => navigate("/report")}
+              >
+                <TreePine size={14} />
+                Report a Hazard
+              </button>
+              <div className="flex items-center gap-2 text-sm text-gray-500">
+                <span className={`inline-flex h-2 w-2 rounded-full ${source === "backend" ? "bg-green-500" : "bg-amber-500"}`} />
+                {loading ? "Loading…" : `${stats.total} requests analyzed`}
+                {source && !loading && (
+                  <span className="ml-1 text-xs text-gray-400">
+                    ({source === "backend" ? "live HRM data" : "demo data"})
+                  </span>
+                )}
+              </div>
             </div>
           </div>
         </div>
