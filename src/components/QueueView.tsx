@@ -13,6 +13,7 @@ import {
   type SortState,
 } from "./ComplaintTable";
 import { DEFAULT_FILTERS, FilterBar, type Filters } from "./FilterBar";
+import { MapView } from "./MapView";
 import { SummaryCard } from "./SummaryCard";
 import type { ScoredRequest } from "@/lib/types";
 
@@ -135,6 +136,23 @@ export function QueueView({
           totalCount={requests.length}
         />
       </div>
+
+      <section className="mt-4">
+        <div className="mb-2 flex items-baseline justify-between">
+          <h2 className="text-sm font-bold uppercase tracking-wide text-slate-900">
+            Queue Map
+          </h2>
+          <p className="text-xs text-slate-500">
+            {visible.filter((request) => request.latitude !== null && request.longitude !== null).length}{" "}
+            mapped requests
+          </p>
+        </div>
+        <MapView
+          requests={visible}
+          className="h-[360px] sm:h-[420px]"
+          onSelect={(request) => router.push(`/admin/requests/${request.id}`)}
+        />
+      </section>
 
       <div className="mt-4">
         <div className="mb-2 flex items-baseline justify-between">

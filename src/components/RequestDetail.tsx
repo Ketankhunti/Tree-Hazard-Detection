@@ -14,6 +14,7 @@ import {
 import { AssessmentBreakdown } from "./AssessmentBreakdown";
 import { HazardPoster } from "./HazardPoster";
 import { HazardTag } from "./HazardTag";
+import { MapView } from "./MapView";
 import { PhotoAssessment } from "./PhotoAssessment";
 import { PriorityBadge, ReviewBadge } from "./PriorityBadge";
 import type {
@@ -22,45 +23,6 @@ import type {
   ScoredRequest,
   StatusChange,
 } from "@/lib/types";
-
-/** Stylized street grid + pin. Deliberately not a real mapping dependency. */
-function MapPlaceholder({ request }: { request: ScoredRequest }) {
-  return (
-    <div className="relative aspect-[4/3] w-full overflow-hidden border border-slate-200 bg-slate-100">
-      <svg
-        className="absolute inset-0 h-full w-full"
-        viewBox="0 0 200 150"
-        preserveAspectRatio="none"
-        aria-hidden
-      >
-        <rect width="200" height="150" fill="#f1f5f9" />
-        {[18, 52, 86, 120].map((y) => (
-          <rect key={y} x="0" y={y} width="200" height="9" fill="#e2e8f0" />
-        ))}
-        {[26, 74, 122, 170].map((x) => (
-          <rect key={x} x={x} y="0" width="9" height="150" fill="#e2e8f0" />
-        ))}
-        <rect x="80" y="24" width="36" height="24" fill="#e7e5e4" stroke="#d6d3d1" />
-        <rect x="128" y="60" width="34" height="22" fill="#e7e5e4" stroke="#d6d3d1" />
-        <rect x="36" y="94" width="30" height="22" fill="#e7e5e4" stroke="#d6d3d1" />
-        <rect x="128" y="96" width="34" height="20" fill="#dcfce7" stroke="#bbf7d0" />
-      </svg>
-
-      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-full">
-        <MapPin className="h-8 w-8 fill-red-600 text-white drop-shadow" aria-hidden />
-      </div>
-
-      <div className="absolute inset-x-0 bottom-0 bg-white/95 px-3 py-2">
-        <p className="text-xs font-semibold text-slate-900">{request.address}</p>
-        <p className="font-mono text-[10px] text-slate-500">
-          {request.latitude !== null && request.longitude !== null
-            ? `${request.latitude.toFixed(4)}, ${request.longitude.toFixed(4)} · ${request.locationSource}`
-            : "No coordinates on file"}
-        </p>
-      </div>
-    </div>
-  );
-}
 
 function Fact({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -253,7 +215,18 @@ export function RequestDetail({
                 <MapPin className="h-4 w-4 text-slate-400" aria-hidden />
                 Inspection Location
               </h2>
-              <MapPlaceholder request={request} />
+              <MapView
+                requests={[request]}
+                selectedId={request.id}
+                className="aspect-[4/3] min-h-0"
+              />
+              <p className="mt-2 font-mono text-[10px] text-slate-500">
+                {request.latitude !== null && request.longitude !== null
+                  ? `${request.latitude.toFixed(4)}, ${request.longitude.toFixed(
+                      4
+                    )} - ${request.locationSource}`
+                  : "No coordinates on file"}
+              </p>
             </section>
 
             <section className="panel p-4">
@@ -320,3 +293,4 @@ export function RequestDetail({
     </>
   );
 }
+
