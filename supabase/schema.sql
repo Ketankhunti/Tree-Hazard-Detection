@@ -1,6 +1,6 @@
 -- ============================================================
 -- Tree Hazard Detection — Supabase Schema
--- Run this in the Supabase SQL Editor
+-- Idempotent: safe to run multiple times in the SQL Editor
 -- ============================================================
 
 -- Citizen-submitted tree hazard complaints
@@ -31,6 +31,11 @@ create index if not exists complaints_status_idx
 -- Enable Row Level Security
 alter table public.complaints enable row level security;
 
+-- Drop existing policies before recreating (idempotent)
+drop policy if exists "Public can read complaints"    on public.complaints;
+drop policy if exists "Public can submit complaints"  on public.complaints;
+drop policy if exists "Public can update complaints"  on public.complaints;
+
 -- Anyone can read complaints (public dashboard)
 create policy "Public can read complaints"
   on public.complaints for select
@@ -53,6 +58,10 @@ create policy "Public can update complaints"
 insert into storage.buckets (id, name, public)
 values ('complaint-photos', 'complaint-photos', true)
 on conflict (id) do nothing;
+
+-- Drop existing storage policies before recreating (idempotent)
+drop policy if exists "Public can upload complaint photos" on storage.objects;
+drop policy if exists "Public can read complaint photos"    on storage.objects;
 
 -- Allow public uploads to the complaint-photos bucket
 create policy "Public can upload complaint photos"
