@@ -2,12 +2,13 @@ import crypto from "node:crypto";
 
 import { z } from "zod";
 
-import { classifyComplaint, fuseClassification } from "@/backend/domain/scoring";
+import { classifyComplaint } from "@/backend/domain/scoring";
 import {
   findDuplicateCandidates,
   pickAutoLink,
   type DuplicateCandidate,
 } from "@/backend/domain/duplicates";
+import { hasLLM } from "@/backend/config";
 import { extractGps } from "@/backend/services/exif";
 import { resolveLocation } from "@/backend/services/geocode";
 import {
@@ -26,7 +27,10 @@ import {
   writeImage,
 } from "@/backend/services/storage";
 import type { Classification, RequestStatus } from "@/shared/types";
-import { analyzeImage, canAnalyze } from "@/backend/services/vision";
+import {
+  analyzeHazard,
+  aiResultToClassification,
+} from "@/backend/services/llmClient";
 
 /**
  * The submission pipeline.
@@ -116,21 +120,11 @@ export async function submitRequest(
   const exif = photo ? await extractGps(photo.data) : null;
   const location = await resolveLocation({ address: input.address, exif });
 
-  // --- Classification: text first, then the photo ---------------------------
+  // --- Classification: text-only first (instant) ---------------------------
+  // The AI analysis runs in the background after we persist, so the resident
+  // gets an immediate response. The text-only score is a safe fallback.
   let classification = classifyComplaint(input.description);
   let photoAnalyzed = false;
-
-  if (photo && canAnalyze(photo.mimeType)) {
-    const findings = await analyzeImage(
-      photo.data,
-      photo.mimeType,
-      input.description
-    );
-    if (findings) {
-      classification = fuseClassification(classification, findings);
-      photoAnalyzed = true;
-    }
-  }
 
   // --- Duplicate check against everything currently open --------------------
   const candidates = findDuplicateCandidates(
@@ -147,7 +141,7 @@ export async function submitRequest(
   const autoLink = pickAutoLink(candidates);
   const status: RequestStatus = autoLink ? "Duplicate" : "Submitted";
 
-  // --- Persist --------------------------------------------------------------
+  // --- Persist immediately (before AI analysis) -----------------------------
   await insertRequest({
     id,
     reference,
@@ -202,6 +196,13 @@ export async function submitRequest(
     });
   }
 
+  // --- Fire AI analysis in the background (non-blocking) --------------------
+  // The promise is intentionally NOT awaited. The resident's request is
+  // already saved; the AI re-scores it and updates the assessment when done.
+  runAiAnalysis(id, input.description, photo).catch((err) =>
+    console.error("[LLM] Background analysis failed:", (err as Error).message)
+  );
+
   return {
     id,
     reference,
@@ -224,4 +225,37 @@ export async function submitRequest(
     duplicateSuggestions: autoLink ? [] : candidates.slice(0, 3),
     photoAnalyzed,
   };
+}
+
+/**
+ * Background AI analysis — runs after the request is persisted.
+ *
+ * Calls GLM-5.2 (with Llama Parse for photos) to re-score the request, then
+ * saves the updated classification. Failures are logged but never thrown —
+ * the text-only classification from submitRequest remains as the fallback.
+ */
+async function runAiAnalysis(
+  requestId: string,
+  description: string,
+  photo: SubmittedPhoto | null
+): Promise<void> {
+  if (!hasLLM()) return;
+
+  try {
+    const aiResult = await analyzeHazard(
+      description,
+      photo?.data ?? null,
+      photo?.mimeType ?? null
+    );
+    const classification = aiResultToClassification(aiResult);
+    await saveClassification(requestId, classification);
+    console.log(
+      `[LLM] Background analysis complete for ${requestId} — dangerScore=${classification.dangerScore}`
+    );
+  } catch (err) {
+    console.error(
+      `[LLM] Background analysis failed for ${requestId}:`,
+      (err as Error).message
+    );
+  }
 }

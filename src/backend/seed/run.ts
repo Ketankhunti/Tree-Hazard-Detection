@@ -10,7 +10,7 @@
  * report is where it shows up.
  */
 
-import { closePool, dropAll, query } from "@/backend/db/client";
+import { closePool, dropAll, supabaseCount, supabaseFetch } from "@/backend/db/client";
 import { distanceMeters, formatDistance } from "@/shared/geo";
 import {
   insertFeedback,
@@ -197,14 +197,11 @@ async function main(): Promise<void> {
     await dropAll();
   }
 
-  const [{ n }] = await query<{ n: string }>(
-    "SELECT COUNT(*) AS n FROM requests"
-  );
-  const existing = { n: Number(n) };
+  const existing = await supabaseCount("requests");
 
-  if (existing.n > 0 && !reset) {
+  if (existing > 0 && !reset) {
     console.log(
-      `Database already holds ${existing.n} requests. Use "npm run db:reset" to rebuild.`
+      `Database already holds ${existing} requests. Use "npm run db:reset" to rebuild.`
     );
     await report();
     return;
@@ -222,17 +219,25 @@ async function main(): Promise<void> {
     if (fixture.duplicateOf) await seedOne(fixture);
   }
 
-  const counts = await query<{ status: string; n: string }>(
-    "SELECT status, COUNT(*) AS n FROM requests GROUP BY status ORDER BY status"
-  );
+  // Count by status: fetch all statuses and count in JS (PostgREST has no GROUP BY)
+  const statusRows = await supabaseFetch<{ status: string }[]>("requests", "GET", undefined, {
+    select: "status",
+    limit: 10000,
+  });
+  const statusCounts: Record<string, number> = {};
+  if (statusRows) {
+    for (const row of statusRows) {
+      statusCounts[row.status] = (statusCounts[row.status] ?? 0) + 1;
+    }
+  }
 
   console.log(`\nSeeded ${fixtures.length} requests:`);
-  for (const row of counts) console.log(`  ${row.status.padEnd(14)} ${row.n}`);
+  for (const [status, n] of Object.entries(statusCounts).sort((a, b) => a[0].localeCompare(b[0]))) {
+    console.log(`  ${status.padEnd(14)} ${n}`);
+  }
 
-  const [images] = await query<{ n: string }>(
-    "SELECT COUNT(*) AS n FROM images"
-  );
-  console.log(`  ${"photos".padEnd(14)} ${images.n}`);
+  const imageCount = await supabaseCount("images");
+  console.log(`  ${"photos".padEnd(14)} ${imageCount}`);
 
   await report();
 }

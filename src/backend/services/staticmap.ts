@@ -5,6 +5,7 @@ import type { Point } from "@/shared/geo";
 import {
   BUNDLE_MAP,
   LOCATION_MAP,
+  QUEUE_MAP,
   fitViewport,
   hasCoordinates,
   pointViewport,
@@ -97,6 +98,11 @@ export function bundleMapImage(points: Point[]): StaticMapImage | null {
 export function locationMapImage(point: Point): StaticMapImage | null {
   if (!hasCoordinates(point)) return null;
   return staticMapImage(pointViewport(point, LOCATION_MAP));
+}
+
+/** Queue overview basemap fitted to every open request. */
+export function queueMapImage(points: Point[]): StaticMapImage | null {
+  return staticMapImage(fitViewport(points, QUEUE_MAP));
 }
 
 /**

@@ -14,6 +14,18 @@ export const config = {
   visionModel: process.env.VISION_MODEL ?? "claude-opus-5",
 
   /**
+   * GLM-5.2 LLM hazard analysis (photo-to-text + AI scoring).
+   * When LLM_API_KEY is set, the intake pipeline uses GLM instead of the
+   * Anthropic vision pass. Falls back to text-only triage when unset.
+   */
+  llmApiKey: process.env.LLM_API_KEY ?? null,
+  llmBaseUrl: process.env.LLM_BASE_URL ?? "http://34.41.10.8:4000/v1",
+  llmModel: process.env.LLM_MODEL ?? "glm-5.2",
+
+  /** Llama Parse API key for image-to-text extraction. */
+  llamaParseApiKey: process.env.LLAMA_PARSE_API_KEY ?? null,
+
+  /**
    * Google Maps Platform key, used for both Geocoding and the Static Maps
    * basemap. Optional on purpose - the local Halifax gazetteer resolves the
    * known streets with no network call and the maps fall back to a coordinate
@@ -88,4 +100,9 @@ export function hasVision(): boolean {
 /** True when addresses geocode through Google and maps render real streets. */
 export function hasMaps(): boolean {
   return config.googleMapsApiKey !== null;
+}
+
+/** True when the GLM-5.2 LLM pipeline is configured. */
+export function hasLLM(): boolean {
+  return config.llmApiKey !== null;
 }
