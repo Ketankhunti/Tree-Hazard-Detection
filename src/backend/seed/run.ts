@@ -27,40 +27,18 @@ import {
   writeImage,
 } from "@/backend/services/storage";
 import { classifyComplaint } from "@/backend/domain/scoring";
+import {
+  PLACEHOLDER_MIME,
+  placeholderPhotoSvg,
+} from "@/backend/seed/placeholder-photo";
 import type { RequestStatus } from "@/shared/types";
 import { fixtures, type Fixture } from "@/backend/seed/fixtures";
-
-const PLACEHOLDER_MIME = "image/svg+xml";
 
 function isoDaysAgo(days: number): string {
   const date = new Date();
   date.setHours(11, 30, 0, 0);
   date.setDate(date.getDate() - days);
   return date.toISOString();
-}
-
-/**
- * Stand-in for a resident's photo.
- *
- * Real JPEGs would be better, and the demo should use them - drop files into
- * `seed-photos/<fixture-id>.jpg` and extend this to read them. Until then a
- * generated SVG exercises the full upload -> storage -> serve path, which is
- * what Phase 0 needs to prove.
- */
-function placeholderSvg(fixture: Fixture): string {
-  const tone =
-    fixture.status === "Completed" ? "#64748b" : "#3f6212";
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600">
-  <rect width="800" height="600" fill="#e2e8f0"/>
-  <rect x="0" y="430" width="800" height="170" fill="#cbd5e1"/>
-  <rect x="360" y="240" width="46" height="210" fill="#78716c"/>
-  <circle cx="383" cy="210" r="118" fill="${tone}" opacity="0.85"/>
-  <circle cx="300" cy="250" r="78" fill="${tone}" opacity="0.7"/>
-  <circle cx="470" cy="252" r="84" fill="${tone}" opacity="0.75"/>
-  <text x="400" y="527" font-family="monospace" font-size="26" fill="#475569" text-anchor="middle">${fixture.reference}</text>
-  <text x="400" y="561" font-family="sans-serif" font-size="20" fill="#64748b" text-anchor="middle">${fixture.address}</text>
-  <text x="400" y="586" font-family="sans-serif" font-size="14" fill="#94a3b8" text-anchor="middle">placeholder - no field photo supplied</text>
-</svg>`;
 }
 
 async function seedOne(fixture: Fixture): Promise<void> {
@@ -116,7 +94,14 @@ async function seedOne(fixture: Fixture): Promise<void> {
   if (fixture.photo) {
     const imageId = newImageId();
     const filename = filenameFor(imageId, PLACEHOLDER_MIME);
-    const body = Buffer.from(placeholderSvg(fixture), "utf8");
+    const body = Buffer.from(
+      placeholderPhotoSvg({
+        reference: fixture.reference,
+        address: fixture.address,
+        muted: fixture.status === "Completed",
+      }),
+      "utf8"
+    );
     await writeImage(filename, body);
     await insertImage({
       id: imageId,

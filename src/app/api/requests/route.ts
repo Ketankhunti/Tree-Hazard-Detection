@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { resolveImageMime } from "@/backend/services/image-mime";
 import {
   submissionSchema,
   submitRequest,
@@ -44,9 +45,10 @@ export async function POST(request: Request) {
   let photo: SubmittedPhoto | null = null;
   const file = form.get("photo");
   if (file instanceof File && file.size > 0) {
+    const data = Buffer.from(await file.arrayBuffer());
     photo = {
-      data: Buffer.from(await file.arrayBuffer()),
-      mimeType: file.type,
+      data,
+      mimeType: resolveImageMime(file.type, data),
       originalName: file.name,
     };
     const problem = validatePhoto(photo);

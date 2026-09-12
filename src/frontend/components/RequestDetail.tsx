@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 
 import { AssessmentBreakdown } from "./AssessmentBreakdown";
+import { FieldPhoto } from "./FieldPhoto";
 import { DayPlan } from "./DayPlan";
 import { HazardPoster } from "./HazardPoster";
 import { HazardTag } from "./HazardTag";
@@ -343,12 +344,10 @@ export function RequestDetail({
               {images.length > 0 ? (
                 <div className="space-y-3">
                   {images.map((image) => (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
+                    <FieldPhoto
                       key={image.id}
-                      src={`/api/images/${image.id}`}
-                      alt={`Photo submitted for ${request.reference}`}
-                      className="w-full border border-slate-200"
+                      image={image}
+                      reference={request.reference}
                     />
                   ))}
                 </div>
