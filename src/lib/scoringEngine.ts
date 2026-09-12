@@ -394,3 +394,103 @@ export function scoreComplaint(complaint: TreeComplaint): ScoredComplaint {
 export function scoreAllComplaints(complaints: TreeComplaint[]): ScoredComplaint[] {
   return complaints.map(scoreComplaint).sort((a, b) => b.scores.finalScore - a.scores.finalScore);
 }
+
+// ===== AI-powered scoring (uses real LLM analysis from backend) =====
+
+/**
+ * Score a complaint using real LLM image analysis results.
+ * This replaces the mock image detection with actual AI output.
+ *
+ * @param complaint     — the complaint to score
+ * @param aiAnalysis    — LLM analysis result from the backend /api/analyze-hazard endpoint
+ * @returns             — ScoredComplaint with AI-powered danger score
+ */
+export function scoreComplaintWithAI(
+  complaint: TreeComplaint,
+  aiAnalysis: {
+    dangerScore: number;
+    hazards: { label: string; points: number; source: "image" }[];
+    isUnsure: boolean;
+    textImageConflict: boolean;
+    confidence: number;
+    reasoning: string;
+    hasImage: boolean;
+    summary: string;
+  }
+): ScoredComplaint {
+  const textResult = calculateTextDangerScore(complaint.complaintText);
+
+  // Build image detection result from AI analysis
+  const imageDetection: ImageDetectionResult = {
+    hazards: aiAnalysis.hazards.map((h) => ({
+      label: h.label,
+      points: h.points,
+      source: "image" as const,
+    })),
+    confidence: aiAnalysis.confidence,
+    summary: aiAnalysis.summary,
+    hasImage: aiAnalysis.hasImage,
+  };
+
+  const imageResult = calculateImageDangerScore(imageDetection);
+
+  // Use AI's danger score as the combined danger score
+  // but still merge hazards from both text and image
+  const { hazards } = calculateCombinedDangerScore(
+    textResult,
+    imageResult,
+    imageDetection
+  );
+
+  // Override with AI's danger score and conflict detection
+  const dangerScore = aiAnalysis.dangerScore;
+  const aiConflict = aiAnalysis.textImageConflict;
+
+  const waitScore = calculateWaitScore(complaint.daysWaiting);
+  const locationScore = calculateLocationScore(complaint.street);
+  const { score: reviewScore, status: reviewStatus } = calculateReviewScore(
+    complaint.complaintText,
+    imageDetection
+  );
+
+  // If AI says unsure, override review status
+  const finalReviewStatus: ReviewStatus = aiAnalysis.isUnsure ? "Unsure" : reviewStatus;
+  const finalReviewScore = aiAnalysis.isUnsure ? 100 : reviewScore;
+
+  const finalScore = Math.round(
+    dangerScore * 0.50 + waitScore * 0.25 + locationScore * 0.15 + finalReviewScore * 0.10
+  );
+
+  const scores: ScoreBreakdown = {
+    textDangerScore: textResult.score,
+    imageDangerScore: imageResult.score,
+    dangerScore,
+    waitScore,
+    locationScore,
+    reviewScore: finalReviewScore,
+    finalScore,
+  };
+
+  const priority = getPriority(finalScore);
+
+  // Use AI reasoning if available, otherwise generate our own
+  const reasoning = aiAnalysis.reasoning || generateReasoning(
+    complaint,
+    scores,
+    hazards,
+    finalReviewStatus,
+    imageDetection,
+    aiConflict
+  );
+
+  return {
+    ...complaint,
+    scores,
+    hazards,
+    imageDetection,
+    priority,
+    reviewStatus: finalReviewStatus,
+    reasoning,
+    textImageConflict: aiConflict,
+  };
+}

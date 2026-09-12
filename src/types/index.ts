@@ -14,6 +14,7 @@ export interface TreeComplaint {
   status: ComplaintStatus;
   latitude: number;
   longitude: number;
+  source?: "citizen" | "hrm";
   photoUrl?: string;
   photoUrls?: string[]; // multiple citizen photos
 }

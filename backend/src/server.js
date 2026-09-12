@@ -28,6 +28,7 @@ import {
 } from "./complaintGenerator.js";
 import { supabase } from "./supabaseClient.js";
 import { uploadImageToGCS } from "./cloudStorage.js";
+import { analyzeHazard } from "./llmClient.js";
 
 const PORT = process.env.PORT || 3001;
 const CORS_HEADERS = {
@@ -128,6 +129,61 @@ async function fetchCitizenComplaintById(id) {
 // Directory for uploaded photos
 const UPLOAD_DIR = path.join(process.cwd(), "uploads");
 try { fs.mkdirSync(UPLOAD_DIR, { recursive: true }); } catch {}
+
+// ── AI Analysis Cache ──────────────────────────────────────────
+// In-memory cache for fast lookups. Also persisted to Supabase
+// (ai_analyses table) so results survive server restarts and
+// are visible to all clients (e.g. your friend's local machine).
+const aiCache = new Map();
+
+/** Save an AI analysis result to Supabase (upsert by complaint_id) */
+async function saveAIAnalysis(complaintId, result) {
+  const { error } = await supabase
+    .from("ai_analyses")
+    .upsert({
+      complaint_id: complaintId,
+      danger_score: result.dangerScore,
+      hazards: result.hazards,
+      is_unsure: result.isUnsure,
+      text_image_conflict: result.textImageConflict,
+      confidence: result.confidence,
+      reasoning: result.reasoning,
+      has_image: result.hasImage,
+      photo_description: result.photoDescription,
+      summary: result.summary,
+    });
+  if (error) {
+    console.warn(`[AI DB] Failed to save analysis for ${complaintId}:`, error.message);
+  }
+}
+
+/** Load ALL AI analyses from Supabase into the in-memory cache (on startup) */
+async function loadAIAnalysesFromDB() {
+  const { data, error } = await supabase.from("ai_analyses").select("*");
+  if (error) {
+    console.warn("[AI DB] Failed to load analyses:", error.message);
+    return;
+  }
+  if (data) {
+    for (const row of data) {
+      aiCache.set(`ai:${row.complaint_id}`, {
+        dangerScore: row.danger_score,
+        hazards: row.hazards,
+        isUnsure: row.is_unsure,
+        textImageConflict: row.text_image_conflict,
+        confidence: row.confidence,
+        reasoning: row.reasoning,
+        hasImage: row.has_image,
+        photoDescription: row.photo_description,
+        summary: row.summary,
+      });
+    }
+    console.log(`[AI DB] Loaded ${data.length} cached analyses from Supabase`);
+  }
+}
+
+// Load cached AI analyses on startup (non-blocking)
+loadAIAnalysesFromDB();
 
 // In-memory cache with TTL
 const cache = new Map();
@@ -297,11 +353,11 @@ const server = http.createServer(async (req, res) => {
   }
 
   const url = new URL(req.url, `http://localhost:${PORT}`);
-  const path = url.pathname;
+  const reqPath = url.pathname;
 
   try {
     // Health check
-    if (path === "/api/health") {
+    if (reqPath === "/api/health") {
       return sendJson(res, 200, {
         status: "ok",
         timestamp: new Date().toISOString(),
@@ -310,7 +366,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     // Get all complaints (enriched with real HRM tree data + citizen submissions)
-    if (path === "/api/complaints" && req.method === "GET") {
+    if (reqPath === "/api/complaints" && req.method === "GET") {
       const hrmComplaints = await getCached("complaints", () =>
         generateComplaintsFromHRM(20)
       );
@@ -321,7 +377,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     // Submit a new citizen complaint
-    if (path === "/api/complaints" && req.method === "POST") {
+    if (reqPath === "/api/complaints" && req.method === "POST") {
       const body = await readBody(req);
       const contentType = req.headers["content-type"] || "";
 
@@ -350,6 +406,23 @@ const server = http.createServer(async (req, res) => {
 
       const complaint = await createCitizenComplaint(fields, photoFile);
 
+      // Auto-trigger AI analysis for the new complaint (non-blocking)
+      if (complaint.photoUrl || complaint.complaintText) {
+        const photoPath = complaint.photoUrl
+          ? path.join(UPLOAD_DIR, path.basename(complaint.photoUrl))
+          : null;
+        const cacheKey = `ai:${complaint.id}`;
+        analyzeHazard(complaint.complaintText, photoPath)
+          .then((result) => {
+            aiCache.set(cacheKey, result);
+            saveAIAnalysis(complaint.id, result);
+            console.log(`[AI Auto] Analyzed new complaint ${complaint.id} — dangerScore=${result.dangerScore}`);
+          })
+          .catch((err) => {
+            console.error(`[AI Auto] Failed for ${complaint.id}:`, err.message);
+          });
+      }
+
       return sendJson(res, 201, {
         id: complaint.id,
         photoUrl: complaint.photoUrl,
@@ -358,7 +431,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     // Get single complaint by ID
-    const complaintMatch = path.match(/^\/api\/complaints\/(.+)$/);
+    const complaintMatch = reqPath.match(/^\/api\/complaints\/(.+)$/);
     if (complaintMatch && req.method === "GET") {
       const id = complaintMatch[1];
       // Check citizen complaints first (Supabase with in-memory fallback)
@@ -374,25 +447,25 @@ const server = http.createServer(async (req, res) => {
     }
 
     // Get full tree inventory for map
-    if (path === "/api/trees") {
+    if (reqPath === "/api/trees") {
       const trees = await getCached("trees", () => getHalifaxTreeInventory());
       return sendJson(res, 200, { trees, count: trees.length });
     }
 
     // Get recent tree-related 311 calls
-    if (path === "/api/311-calls") {
+    if (reqPath === "/api/311-calls") {
       const calls = await getCached("311-calls", () => fetchTree311Calls(50));
       return sendJson(res, 200, { calls, count: calls.length });
     }
 
     // Get 311 call statistics
-    if (path === "/api/311-stats") {
+    if (reqPath === "/api/311-stats") {
       const stats = await getCached("311-stats", () => fetchTree311Stats());
       return sendJson(res, 200, stats);
     }
 
     // Geocode Halifax address using Google Maps API
-    if (path === "/api/geocode" && req.method === "GET") {
+    if (reqPath === "/api/geocode" && req.method === "GET") {
       const address = url.searchParams.get("address");
       if (!address) {
         return sendError(res, 400, "Address query parameter is required");
@@ -430,9 +503,147 @@ const server = http.createServer(async (req, res) => {
 
       return sendJson(res, 200, result);
     }
+    // Batch-analyze ALL complaints with AI (one-time bulk run)
+    // Processes complaints that don't have cached AI results yet.
+    // Returns immediately with a job ID; client polls /api/ai-scores for progress.
+    if (reqPath === "/api/analyze-all" && req.method === "POST") {
+      // Get all complaints
+      const hrmComplaints = await getCached("complaints", () =>
+        generateComplaintsFromHRM(20)
+      );
+      const citizen = await fetchCitizenComplaints();
+      const all = [...citizen, ...hrmComplaints];
+
+      // Filter to complaints not yet analyzed
+      const pending = all.filter((c) => !aiCache.has(`ai:${c.id}`));
+      const alreadyCached = all.length - pending.length;
+
+      // Process in background (non-blocking) — 3 at a time
+      (async () => {
+        const CONCURRENCY = 3;
+        let idx = 0;
+        async function processOne() {
+          while (idx < pending.length) {
+            const current = idx++;
+            const c = pending[current];
+            try {
+              const photoPath = c.photoUrl
+                ? path.join(UPLOAD_DIR, path.basename(c.photoUrl))
+                : null;
+              const result = await analyzeHazard(c.complaintText, photoPath);
+              aiCache.set(`ai:${c.id}`, result);
+              saveAIAnalysis(c.id, result);
+              console.log(`[AI Batch] ${current + 1}/${pending.length} — ${c.id} dangerScore=${result.dangerScore}`);
+            } catch (err) {
+              console.error(`[AI Batch] Failed for ${c.id}:`, err.message);
+            }
+          }
+        }
+        await Promise.all(Array.from({ length: CONCURRENCY }, () => processOne()));
+        console.log(`[AI Batch] Complete — ${aiCache.size} total cached results`);
+      })();
+
+      return sendJson(res, 200, {
+        message: "Batch analysis started",
+        total: all.length,
+        pending: pending.length,
+        alreadyCached,
+      });
+    }
+
+    // Get cached AI scores for all complaints (for dashboard live scores)
+    if (reqPath === "/api/ai-scores" && req.method === "GET") {
+      const scores = {};
+      for (const [key, value] of aiCache.entries()) {
+        if (key.startsWith("ai:")) {
+          const complaintId = key.slice(3);
+          scores[complaintId] = value;
+        }
+      }
+      return sendJson(res, 200, { scores, count: Object.keys(scores).length });
+    }
+
+    // AI hazard analysis — analyze a complaint's text + photo with the LLM
+    if (reqPath === "/api/analyze-hazard" && req.method === "POST") {
+      const body = await readBody(req);
+      const contentType = req.headers["content-type"] || "";
+
+      let complaintText, photoPath;
+
+      if (contentType.startsWith("multipart/form-data")) {
+        const boundary = contentType.match(/boundary=(.+)/)?.[1];
+        if (!boundary) return sendError(res, 400, "Missing multipart boundary");
+        const parsed = parseMultipart(body, boundary);
+        complaintText = parsed.fields.complaintText || "";
+        const photoFile = (parsed.files.photos || parsed.files.photo || [])[0];
+        if (photoFile) {
+          // Save temp file for LLM to read
+          const tempName = `llm-temp-${Date.now()}.${photoFile.filename.match(/\.(\w+)$/)?.[1] || "jpg"}`;
+          photoPath = path.join(UPLOAD_DIR, tempName);
+          fs.writeFileSync(photoPath, photoFile.data);
+        } else if (parsed.fields.complaintId) {
+          // Look up saved photo by complaintId
+          const complaint = await fetchCitizenComplaintById(parsed.fields.complaintId);
+          if (complaint?.photoUrl) {
+            photoPath = path.join(UPLOAD_DIR, path.basename(complaint.photoUrl));
+          }
+        }
+      } else {
+        try {
+          const json = JSON.parse(body.toString());
+          complaintText = json.complaintText || "";
+          // If a complaintId is provided, look up its saved photo
+          if (json.complaintId) {
+            const complaint = await fetchCitizenComplaintById(json.complaintId);
+            if (complaint?.photoUrl) {
+              photoPath = path.join(UPLOAD_DIR, path.basename(complaint.photoUrl));
+            }
+          }
+        } catch {
+          return sendError(res, 400, "Invalid JSON body");
+        }
+      }
+
+      if (!complaintText || complaintText.trim().length < 5)
+        return sendError(res, 400, "complaintText is required");
+
+      // Determine cache key: prefer complaintId, fall back to text hash
+      let complaintId = null;
+      if (contentType.startsWith("multipart/form-data")) {
+        const boundary = contentType.match(/boundary=(.+)/)?.[1];
+        if (boundary) {
+          const parsed = parseMultipart(body, boundary);
+          complaintId = parsed.fields.complaintId || null;
+        }
+      } else {
+        try {
+          complaintId = JSON.parse(body.toString()).complaintId || null;
+        } catch {}
+      }
+      const cacheKey = complaintId
+        ? `ai:${complaintId}`
+        : `ai:text:${complaintText.trim().toLowerCase().slice(0, 100)}`;
+
+      // Return cached result if available
+      if (aiCache.has(cacheKey)) {
+        console.log(`[AI Cache] HIT for ${cacheKey} — returning cached result`);
+        return sendJson(res, 200, aiCache.get(cacheKey));
+      }
+
+      try {
+        const result = await analyzeHazard(complaintText, photoPath);
+        aiCache.set(cacheKey, result);
+        if (complaintId) saveAIAnalysis(complaintId, result);
+        console.log(`[AI Cache] Stored result for ${cacheKey}`);
+        return sendJson(res, 200, result);
+      } catch (err) {
+        console.error("AI analysis failed:", err.message);
+        return sendError(res, 500, `AI analysis failed: ${err.message}`);
+      }
+    }
 
     // Unknown endpoint
-    return sendError(res, 404, `Endpoint not found: ${path}`);
+    return sendError(res, 404, `Endpoint not found: ${reqPath}`);
   } catch (err) {
     console.error("Server error:", err);
     return sendError(res, 500, err.message);

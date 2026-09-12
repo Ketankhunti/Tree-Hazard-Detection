@@ -25,6 +25,9 @@ backend/service-account.json
 uploads/
 backend/uploads/
 
+# Uploaded photos (runtime data, not source)
+backend/uploads/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

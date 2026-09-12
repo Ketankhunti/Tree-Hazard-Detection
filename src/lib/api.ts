@@ -224,3 +224,80 @@ export async function geocodeAddress(address: string): Promise<GeocodeResult | n
 
   return null;
 }
+
+/**
+ * Fetch cached AI hazard scores for all complaints.
+ * Returns a map of complaintId → AIHazardAnalysis.
+ * Used by the dashboard to show live AI-powered scores.
+ */
+export async function fetchAIScores(): Promise<Record<string, AIHazardAnalysis>> {
+  try {
+    const res = await fetch(`${API_BASE}/ai-scores`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    return data.scores || {};
+  } catch (err) {
+    console.warn("AI scores unavailable:", getErrorMessage(err));
+    return {};
+  }
+}
+
+/**
+ * Trigger batch AI analysis for all complaints that don't have cached results yet.
+ * Returns immediately with counts; the dashboard polls /api/ai-scores for live progress.
+ */
+export async function fetchAnalyzeAll(): Promise<{
+  message: string;
+  total: number;
+  pending: number;
+  alreadyCached: number;
+}> {
+  const res = await fetch(`${API_BASE}/analyze-all`, {
+    method: "POST",
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+/**
+ * AI hazard analysis result from the backend LLM.
+ */
+export interface AIHazardAnalysis {
+  dangerScore: number;
+  hazards: { label: string; points: number; source: "image" }[];
+  isUnsure: boolean;
+  textImageConflict: boolean;
+  confidence: number;
+  reasoning: string;
+  hasImage: boolean;
+  photoDescription: string | null;
+  summary: string;
+}
+
+/**
+ * Analyze a complaint's hazard level using the backend LLM.
+ * Sends the complaint text + photo (by complaintId lookup or direct upload).
+ */
+export async function analyzeHazard(input: {
+  complaintText: string;
+  complaintId?: string;
+  photo?: File;
+}): Promise<AIHazardAnalysis> {
+  const formData = new FormData();
+  formData.append("complaintText", input.complaintText);
+  if (input.complaintId) formData.append("complaintId", input.complaintId);
+  if (input.photo) formData.append("photos", input.photo);
+  const res = await fetch(`${API_BASE}/analyze-hazard`, {
+    method: "POST",
+    body: formData,
+    signal: AbortSignal.timeout(120000),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+}

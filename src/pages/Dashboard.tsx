@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { TreePine, AlertTriangle, Eye, Clock, Loader2 } from "lucide-react";
+import { TreePine, AlertTriangle, Eye, Clock, Loader2, Sparkles, Zap } from "lucide-react";
 import { useComplaints } from "../hooks/useComplaints";
-import { scoreAllComplaints } from "../lib/scoringEngine";
+import { scoreComplaint, scoreComplaintWithAI } from "../lib/scoringEngine";
+import { fetchAIScores, fetchAnalyzeAll, type AIHazardAnalysis } from "../lib/api";
 import { SummaryCard } from "../components/SummaryCard";
 import { ComplaintTable } from "../components/ComplaintTable";
 import { FilterBar, type FilterState } from "../components/FilterBar";
@@ -10,13 +11,75 @@ import { FilterBar, type FilterState } from "../components/FilterBar";
 export function Dashboard() {
   const navigate = useNavigate();
   const { complaints, loading, source } = useComplaints();
+  const [aiScores, setAiScores] = useState<Record<string, AIHazardAnalysis>>({});
+  const [batchRunning, setBatchRunning] = useState(false);
+  const [batchProgress, setBatchProgress] = useState({ done: 0, total: 0 });
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [filters, setFilters] = useState<FilterState>({
     neighborhood: "All",
     priority: "All",
     review: "All",
   });
 
-  const scored = useMemo(() => scoreAllComplaints(complaints), [complaints]);
+  // Fetch cached AI scores (fast — returns from server cache)
+  useEffect(() => {
+    let cancelled = false;
+    fetchAIScores().then((scores) => {
+      if (!cancelled) {
+        setAiScores(scores);
+      }
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Start batch AI analysis for all complaints
+  const handleAnalyzeAll = async () => {
+    if (batchRunning) return;
+    setBatchRunning(true);
+    try {
+      const info = await fetchAnalyzeAll();
+      setBatchProgress({ done: info.alreadyCached, total: info.total });
+      if (info.pending === 0) {
+        // Everything already cached — just refresh
+        const scores = await fetchAIScores();
+        setAiScores(scores);
+        setBatchRunning(false);
+        return;
+      }
+      // Poll for progress every 5 seconds
+      pollRef.current = setInterval(async () => {
+        const scores = await fetchAIScores();
+        setAiScores(scores);
+        const done = Object.keys(scores).length;
+        setBatchProgress({ done, total: info.total });
+        if (done >= info.total) {
+          if (pollRef.current) clearInterval(pollRef.current);
+          setBatchRunning(false);
+        }
+      }, 5000);
+    } catch (err) {
+      console.error("Batch analysis failed:", err);
+      setBatchRunning(false);
+    }
+  };
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, []);
+
+  const scored = useMemo(() => {
+    // Use AI-powered scoring for complaints that have cached AI results,
+    // fall back to text-based scoring for the rest
+    const scoredList = complaints.map((c) =>
+      aiScores[c.id]
+        ? scoreComplaintWithAI(c, aiScores[c.id])
+        : scoreComplaint(c)
+    );
+    return scoredList.sort((a, b) => b.scores.finalScore - a.scores.finalScore);
+  }, [complaints, aiScores]);
 
   const neighborhoods = useMemo(
     () => [...new Set(complaints.map((t) => t.neighborhood))].sort(),
@@ -68,6 +131,27 @@ export function Dashboard() {
                   <span className="ml-1 text-xs text-gray-400">
                     ({source === "backend" ? "live HRM data" : "demo data"})
                   </span>
+                )}
+                {Object.keys(aiScores).length > 0 && (
+                  <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-700">
+                    <Sparkles size={10} />
+                    {Object.keys(aiScores).length} AI-scored
+                  </span>
+                )}
+                {batchRunning && (
+                  <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">
+                    <Loader2 size={10} className="animate-spin" />
+                    {batchProgress.done}/{batchProgress.total} analyzing…
+                  </span>
+                )}
+                {!batchRunning && Object.keys(aiScores).length < complaints.length && (
+                  <button
+                    className="ml-2 inline-flex items-center gap-1 rounded-full bg-purple-600 px-3 py-1 text-xs font-medium text-white hover:bg-purple-700 transition-colors"
+                    onClick={handleAnalyzeAll}
+                  >
+                    <Zap size={12} />
+                    Analyze All with AI
+                  </button>
                 )}
               </div>
             </div>

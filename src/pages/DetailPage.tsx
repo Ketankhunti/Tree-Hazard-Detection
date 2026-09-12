@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, MapPin, Printer, Calendar, Clock, Camera, AlertTriangle, ShieldCheck, Eye, Loader2, TreePine } from "lucide-react";
-import { fetchComplaintById, type BackendComplaint } from "../lib/api";
-import { scoreComplaint } from "../lib/scoringEngine";
+import { ArrowLeft, MapPin, Printer, Calendar, Clock, Camera, AlertTriangle, ShieldCheck, Eye, Loader2, TreePine, Sparkles } from "lucide-react";
+import { fetchComplaintById, analyzeHazard, type BackendComplaint, type AIHazardAnalysis } from "../lib/api";
+import { scoreComplaint, scoreComplaintWithAI } from "../lib/scoringEngine";
+import type { ScoredComplaint } from "../types";
 import { PriorityBadge, ReviewBadge } from "../components/PriorityBadge";
 import { AssessmentBreakdown } from "../components/AssessmentBreakdown";
 import { HazardTag } from "../components/HazardTag";
@@ -11,21 +12,51 @@ import { HazardPoster } from "../components/HazardPoster";
 export function DetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const [data, setData] = useState<{ id: string; complaint: BackendComplaint | null } | null>(null);
+  const [complaint, setComplaint] = useState<BackendComplaint | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [aiAnalysis, setAiAnalysis] = useState<AIHazardAnalysis | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const aiRequestedRef = useRef(false);
 
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
+    setLoading(true);
+    setAiAnalysis(null);
+    setAiError(null);
+    aiRequestedRef.current = false;
     fetchComplaintById(id).then(({ complaint }) => {
       if (!cancelled) {
-        setData({ id, complaint });
+        setComplaint(complaint);
+        setLoading(false);
       }
     });
     return () => { cancelled = true; };
   }, [id]);
 
-  const loading = !data || data.id !== id;
-  const complaint = loading ? null : data.complaint;
+  // Trigger AI analysis when complaint loads (for citizen complaints with photos or text)
+  useEffect(() => {
+    if (!complaint || complaint.source !== "citizen") return;
+    if (aiAnalysis || aiLoading || aiRequestedRef.current) return;
+
+    aiRequestedRef.current = true;
+    setAiLoading(true);
+    setAiError(null);
+
+    analyzeHazard({
+      complaintText: complaint.complaintText,
+      complaintId: complaint.id,
+    })
+      .then((result) => {
+        setAiAnalysis(result);
+        setAiLoading(false);
+      })
+      .catch((err) => {
+        setAiError(err.message);
+        setAiLoading(false);
+      });
+  }, [complaint, aiAnalysis, aiLoading]);
 
   if (loading) {
     return (
@@ -51,7 +82,10 @@ export function DetailPage() {
     );
   }
 
-  const scored = scoreComplaint(complaint);
+  // Use AI-powered scoring if available, otherwise fall back to deterministic
+  const scored: ScoredComplaint = aiAnalysis
+    ? scoreComplaintWithAI(complaint, aiAnalysis)
+    : scoreComplaint(complaint);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -314,11 +348,20 @@ export function DetailPage() {
               </div>
             </div>
 
-            {/* Field Photo + Image Analysis */}
+            {/* Field Photo + AI Analysis */}
             <div className="rounded-lg border border-gray-200 bg-white p-5">
-              <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-gray-700">
-                Field Photo & AI Analysis
-              </h2>
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="text-sm font-bold uppercase tracking-wide text-gray-700">
+                  Field Photo & AI Analysis
+                </h2>
+                {aiAnalysis && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-700">
+                    <Sparkles size={12} /> AI-Powered
+                  </span>
+                )}
+              </div>
+
+              {/* Photo display with GCS / local support */}
               {complaint.photoUrl ? (
                 <div className="relative h-56 overflow-hidden rounded-lg border border-gray-200 bg-gray-900">
                   <img
@@ -338,7 +381,38 @@ export function DetailPage() {
                   </div>
                 </div>
               )}
-              {scored.imageDetection && (
+
+              {/* AI Loading state */}
+              {aiLoading && (
+                <div className="mt-4 flex items-center gap-2 rounded border border-purple-200 bg-purple-50 p-3">
+                  <Loader2 size={16} className="animate-spin text-purple-600" />
+                  <p className="text-sm text-purple-700">
+                    AI is analyzing the photo and complaint text…
+                  </p>
+                </div>
+              )}
+
+              {/* Photo description from Llama Parse */}
+              {aiAnalysis?.photoDescription && !aiLoading && (
+                <div className="mt-3 rounded border border-blue-200 bg-blue-50 p-3">
+                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-blue-600">
+                    AI Photo Description
+                  </p>
+                  <p className="text-sm text-blue-900">{aiAnalysis.photoDescription}</p>
+                </div>
+              )}
+
+              {/* AI Error */}
+              {aiError && !aiLoading && (
+                <div className="mt-4 rounded border border-amber-300 bg-amber-50 p-3">
+                  <p className="text-sm text-amber-800">
+                    AI analysis unavailable: {aiError}. Showing rule-based assessment.
+                  </p>
+                </div>
+              )}
+
+              {/* AI / Image analysis results */}
+              {scored.imageDetection && !aiLoading && (
                 <div className="mt-4 space-y-3">
                   {/* Confidence indicator */}
                   <div className="flex items-center justify-between">
@@ -362,7 +436,7 @@ export function DetailPage() {
                   </div>
                 </div>
               )}
-              {!scored.imageDetection && (
+              {!scored.imageDetection && !aiLoading && (
                 <p className="mt-3 text-sm text-gray-500 italic">
                   No photo was submitted with this complaint. Assessment is based on text description only.
                 </p>

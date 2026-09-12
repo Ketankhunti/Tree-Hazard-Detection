@@ -72,3 +72,41 @@ create policy "Public can upload complaint photos"
 create policy "Public can read complaint photos"
   on storage.objects for select
   using (bucket_id = 'complaint-photos');
+
+-- ============================================================
+-- AI Hazard Analyses — stores LLM results so they persist
+-- across server restarts and are visible to all clients
+-- ============================================================
+create table if not exists public.ai_analyses (
+  complaint_id    text primary key,                 -- CIT-XXXX or HRM-XXXX
+  danger_score    integer not null,
+  hazards         jsonb not null default '[]',      -- [{label, points, source}]
+  is_unsure       boolean not null default false,
+  text_image_conflict boolean not null default false,
+  confidence      double precision not null default 0.5,
+  reasoning       text not null default '',
+  has_image       boolean not null default false,
+  photo_description text,
+  summary         text not null default '',
+  created_at      timestamptz not null default now()
+);
+
+-- Enable RLS
+alter table public.ai_analyses enable row level security;
+
+drop policy if exists "Public can read AI analyses"   on public.ai_analyses;
+drop policy if exists "Public can write AI analyses"  on public.ai_analyses;
+
+create policy "Public can read AI analyses"
+  on public.ai_analyses for select
+  using (true);
+
+create policy "Public can write AI analyses"
+  on public.ai_analyses for insert
+  with check (true);
+
+-- Allow upsert (for re-analysis updates)
+drop policy if exists "Public can update AI analyses" on public.ai_analyses;
+create policy "Public can update AI analyses"
+  on public.ai_analyses for update
+  using (true);
