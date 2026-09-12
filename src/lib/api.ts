@@ -171,6 +171,25 @@ export async function submitComplaint(input: {
 }
 
 /**
+ * Fetch cached AI hazard scores for all complaints.
+ * Returns a map of complaintId → AIHazardAnalysis.
+ * Used by the dashboard to show live AI-powered scores.
+ */
+export async function fetchAIScores(): Promise<Record<string, AIHazardAnalysis>> {
+  try {
+    const res = await fetch(`${API_BASE}/ai-scores`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    return data.scores || {};
+  } catch (err) {
+    console.warn("AI scores unavailable:", err.message);
+    return {};
+  }
+}
+
+/**
  * AI hazard analysis result from the backend LLM.
  */
 export interface AIHazardAnalysis {
@@ -181,6 +200,7 @@ export interface AIHazardAnalysis {
   confidence: number;
   reasoning: string;
   hasImage: boolean;
+  photoDescription: string | null;
   summary: string;
 }
 

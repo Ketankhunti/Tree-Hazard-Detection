@@ -2,9 +2,10 @@
  * LLM Client — AI-powered tree hazard analysis
  *
  * Zero-dependency: uses Node 18+ built-in fetch.
- * Sends the citizen's complaint text + field photo to a vision-capable LLM
- * (OpenAI-compatible /v1/chat/completions endpoint) and returns a structured
- * risk assessment.
+ *
+ * Two-step pipeline:
+ *   1. Llama Parse extracts a text description from the field photo
+ *   2. GLM-5.2 analyzes complaint text + photo description for hazard assessment
  *
  * The system prompt enforces anti-gaming rules:
  * - Visual evidence is weighted over text claims
@@ -14,12 +15,13 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { describePhoto } from "./llamaParseClient.js";
 
 const SYSTEM_PROMPT = `You are an expert arborist AI assistant working for Halifax Urban Forestry. Your job is to analyze tree hazard complaints and produce a structured risk assessment.
 
 You will receive TWO inputs:
 1. A TEXT description of the complaint from a citizen
-2. A PHOTO of the tree (if provided)
+2. A PHOTO DESCRIPTION (text extracted from the field photo by an image-to-text model), if a photo was provided
 
 CRITICAL ANTI-GAMING RULES:
 - Citizens may exaggerate or write alarming descriptions to get faster service. You must NOT inflate a danger score based solely on dramatic language.
@@ -75,56 +77,43 @@ export async function analyzeHazard(complaintText, photoPath) {
     throw new Error("LLM_API_KEY not set in environment");
   }
 
-  // Build the user message — text + optional photo
+  // Step 1: If a photo is provided, extract a text description using Llama Parse
+  let photoDescription = null;
+  if (photoPath) {
+    console.log("[LLM] Extracting photo description via Llama Parse…");
+    photoDescription = await describePhoto(photoPath);
+  }
+
+  // Step 2: Build the user message with complaint text + photo description
   const userText = `Please analyze this tree hazard complaint.
 
 CITIZEN DESCRIPTION:
 "${complaintText}"
 
-${photoPath ? "A field photo is attached. Use both the text and the photo to assess the danger." : "No photo was provided. Assess based on the text description only, but set is_unsure to true and confidence below 0.5."}
+${photoDescription ? `FIELD PHOTO DESCRIPTION (extracted by image-to-text model):
+"${photoDescription}"
+
+Use both the citizen's text and the photo description to assess the danger. The photo description is your visual evidence.` : "No photo was provided. Assess based on the text description only, but set is_unsure to true and confidence below 0.5."}
 
 Return your assessment as the JSON object specified in your instructions.`;
-
-  const content = [{ type: "text", text: userText }];
-
-  // Attach photo as base64 if provided
-  if (photoPath) {
-    try {
-      const imageBuffer = fs.readFileSync(photoPath);
-      const base64 = imageBuffer.toString("base64");
-      const ext = path.extname(photoPath).toLowerCase();
-      const mime =
-        ext === ".png" ? "image/png" :
-        ext === ".gif" ? "image/gif" :
-        ext === ".webp" ? "image/webp" :
-        "image/jpeg";
-      content.push({
-        type: "image_url",
-        image_url: { url: `data:${mime};base64,${base64}` },
-      });
-    } catch (err) {
-      console.warn("Failed to read photo for LLM:", err.message);
-      // Continue without the photo
-    }
-  }
 
   const body = {
     model,
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content },
+      { role: "user", content: userText },
     ],
     temperature: 0.2,
-    max_tokens: 1024,
+    max_tokens: 8192,
   };
 
   const url = `${baseUrl}/chat/completions`;
-  console.log(`[LLM] Analyzing hazard (model=${model}, hasPhoto=${!!photoPath})…`);
+  console.log(`[LLM] Analyzing hazard (model=${model}, hasPhoto=${!!photoPath}, hasDescription=${!!photoDescription})…`);
 
   // GLM-5.2 is a reasoning model — can take up to 90s
   const llmTimeout = AbortSignal.timeout(120000);
 
-  let response = await fetch(url, {
+  const response = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -133,29 +122,6 @@ Return your assessment as the JSON object specified in your instructions.`;
     body: JSON.stringify(body),
     signal: llmTimeout,
   });
-
-  // If multimodal isn't supported, retry with text-only content
-  if (!response.ok && photoPath) {
-    const errText = await response.text().catch(() => "");
-    if (response.status === 400 && errText.includes("multimodal")) {
-      console.warn("[LLM] Multimodal not supported, retrying text-only…");
-      body.messages = [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: userText }, // plain string, no image
-      ];
-      response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(120000),
-      });
-    } else {
-      throw new Error(`LLM API error ${response.status}: ${errText.slice(0, 200)}`);
-    }
-  }
 
   if (!response.ok) {
     const errText = await response.text().catch(() => "");
@@ -182,12 +148,21 @@ Return your assessment as the JSON object specified in your instructions.`;
     jsonStr = braceMatch[0];
   }
 
+  // Handle truncated JSON (reasoning models may hit token limit mid-JSON)
+  // Try to close incomplete JSON by adding missing brackets
   let parsed;
   try {
     parsed = JSON.parse(jsonStr);
   } catch {
-    console.error("[LLM] Failed to parse response:", rawContent.slice(0, 500));
-    throw new Error("LLM returned invalid JSON");
+    // Attempt to repair truncated JSON
+    const repaired = repairTruncatedJson(jsonStr);
+    try {
+      parsed = JSON.parse(repaired);
+      console.warn("[LLM] JSON was truncated, auto-repaired");
+    } catch {
+      console.error("[LLM] Failed to parse response:", rawContent.slice(0, 500));
+      throw new Error("LLM returned invalid JSON");
+    }
   }
 
   // Normalize to our frontend-expected format
@@ -205,6 +180,7 @@ Return your assessment as the JSON object specified in your instructions.`;
     confidence: Math.min(1, Math.max(0, Number(parsed.confidence ?? 0.5))),
     reasoning: parsed.reasoning || "No reasoning provided.",
     hasImage: !!photoPath,
+    photoDescription: photoDescription || null,
     summary: parsed.reasoning || "No summary provided.",
   };
 }
@@ -224,4 +200,50 @@ function hazardLabelToPoints(label) {
     "Sidewalk Obstruction": 5,
   };
   return map[label] ?? 10;
+}
+
+/**
+ * Attempt to repair truncated JSON from a reasoning model.
+ * Strategies:
+ *   1. If inside a string, close the string
+ *   2. Close any unclosed arrays and objects
+ *   3. Remove trailing commas
+ */
+function repairTruncatedJson(str) {
+  let result = str.trim();
+
+  // Remove trailing comma (common truncation point)
+  result = result.replace(/,\s*$/, "");
+
+  // Count unclosed brackets
+  let braces = 0;  // {}
+  let brackets = 0; // []
+  let inString = false;
+  let escape = false;
+
+  for (let i = 0; i < result.length; i++) {
+    const ch = result[i];
+    if (escape) { escape = false; continue; }
+    if (ch === "\\") { escape = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === "{") braces++;
+    if (ch === "}") braces--;
+    if (ch === "[") brackets++;
+    if (ch === "]") brackets--;
+  }
+
+  // If we're inside a string, close it
+  if (inString) {
+    result += '"';
+  }
+
+  // Remove any trailing comma after closing the string
+  result = result.replace(/,\s*$/, "");
+
+  // Close unclosed brackets first, then braces
+  for (let i = 0; i < brackets; i++) result += "]";
+  for (let i = 0; i < braces; i++) result += "}";
+
+  return result;
 }

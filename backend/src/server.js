@@ -121,6 +121,13 @@ async function fetchCitizenComplaintById(id) {
 const UPLOAD_DIR = path.join(process.cwd(), "uploads");
 try { fs.mkdirSync(UPLOAD_DIR, { recursive: true }); } catch {}
 
+// ── AI Analysis Cache ──────────────────────────────────────────
+// Stores LLM results keyed by complaintId so repeated page views
+// don't re-run the expensive Llama Parse + GLM-5.2 pipeline.
+// Results persist for the server's lifetime (no TTL — hazard
+// assessments don't change for the same complaint + photo).
+const aiCache = new Map();
+
 // In-memory cache with TTL
 const cache = new Map();
 const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
@@ -368,6 +375,18 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, stats);
     }
 
+    // Get cached AI scores for all complaints (for dashboard live scores)
+    if (reqPath === "/api/ai-scores" && req.method === "GET") {
+      const scores = {};
+      for (const [key, value] of aiCache.entries()) {
+        if (key.startsWith("ai:")) {
+          const complaintId = key.slice(3);
+          scores[complaintId] = value;
+        }
+      }
+      return sendJson(res, 200, { scores, count: Object.keys(scores).length });
+    }
+
     // AI hazard analysis — analyze a complaint's text + photo with the LLM
     if (reqPath === "/api/analyze-hazard" && req.method === "POST") {
       const body = await readBody(req);
@@ -386,6 +405,12 @@ const server = http.createServer(async (req, res) => {
           const tempName = `llm-temp-${Date.now()}.${photoFile.filename.match(/\.(\w+)$/)?.[1] || "jpg"}`;
           photoPath = path.join(UPLOAD_DIR, tempName);
           fs.writeFileSync(photoPath, photoFile.data);
+        } else if (parsed.fields.complaintId) {
+          // Look up saved photo by complaintId
+          const complaint = await fetchCitizenComplaintById(parsed.fields.complaintId);
+          if (complaint?.photoUrl) {
+            photoPath = path.join(UPLOAD_DIR, path.basename(complaint.photoUrl));
+          }
         }
       } else {
         try {
@@ -406,8 +431,33 @@ const server = http.createServer(async (req, res) => {
       if (!complaintText || complaintText.trim().length < 5)
         return sendError(res, 400, "complaintText is required");
 
+      // Determine cache key: prefer complaintId, fall back to text hash
+      let complaintId = null;
+      if (contentType.startsWith("multipart/form-data")) {
+        const boundary = contentType.match(/boundary=(.+)/)?.[1];
+        if (boundary) {
+          const parsed = parseMultipart(body, boundary);
+          complaintId = parsed.fields.complaintId || null;
+        }
+      } else {
+        try {
+          complaintId = JSON.parse(body.toString()).complaintId || null;
+        } catch {}
+      }
+      const cacheKey = complaintId
+        ? `ai:${complaintId}`
+        : `ai:text:${complaintText.trim().toLowerCase().slice(0, 100)}`;
+
+      // Return cached result if available
+      if (aiCache.has(cacheKey)) {
+        console.log(`[AI Cache] HIT for ${cacheKey} — returning cached result`);
+        return sendJson(res, 200, aiCache.get(cacheKey));
+      }
+
       try {
         const result = await analyzeHazard(complaintText, photoPath);
+        aiCache.set(cacheKey, result);
+        console.log(`[AI Cache] Stored result for ${cacheKey}`);
         return sendJson(res, 200, result);
       } catch (err) {
         console.error("AI analysis failed:", err.message);

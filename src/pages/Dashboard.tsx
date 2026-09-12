@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { TreePine, AlertTriangle, Eye, Clock, Loader2 } from "lucide-react";
+import { TreePine, AlertTriangle, Eye, Clock, Loader2, Sparkles } from "lucide-react";
 import { useComplaints } from "../hooks/useComplaints";
-import { scoreAllComplaints } from "../lib/scoringEngine";
+import { scoreComplaint, scoreComplaintWithAI } from "../lib/scoringEngine";
+import { fetchAIScores, type AIHazardAnalysis } from "../lib/api";
 import { SummaryCard } from "../components/SummaryCard";
 import { ComplaintTable } from "../components/ComplaintTable";
 import { FilterBar, type FilterState } from "../components/FilterBar";
@@ -10,13 +11,34 @@ import { FilterBar, type FilterState } from "../components/FilterBar";
 export function Dashboard() {
   const navigate = useNavigate();
   const { complaints, loading, source } = useComplaints();
+  const [aiScores, setAiScores] = useState<Record<string, AIHazardAnalysis>>({});
   const [filters, setFilters] = useState<FilterState>({
     neighborhood: "All",
     priority: "All",
     review: "All",
   });
 
-  const scored = useMemo(() => scoreAllComplaints(complaints), [complaints]);
+  // Fetch cached AI scores (fast — returns from server cache)
+  useEffect(() => {
+    let cancelled = false;
+    fetchAIScores().then((scores) => {
+      if (!cancelled) {
+        setAiScores(scores);
+      }
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  const scored = useMemo(() => {
+    // Use AI-powered scoring for complaints that have cached AI results,
+    // fall back to text-based scoring for the rest
+    const scoredList = complaints.map((c) =>
+      aiScores[c.id]
+        ? scoreComplaintWithAI(c, aiScores[c.id])
+        : scoreComplaint(c)
+    );
+    return scoredList.sort((a, b) => b.scores.finalScore - a.scores.finalScore);
+  }, [complaints, aiScores]);
 
   const neighborhoods = useMemo(
     () => [...new Set(complaints.map((t) => t.neighborhood))].sort(),
@@ -67,6 +89,12 @@ export function Dashboard() {
                 {source && !loading && (
                   <span className="ml-1 text-xs text-gray-400">
                     ({source === "backend" ? "live HRM data" : "demo data"})
+                  </span>
+                )}
+                {Object.keys(aiScores).length > 0 && (
+                  <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-700">
+                    <Sparkles size={10} />
+                    {Object.keys(aiScores).length} AI-scored
                   </span>
                 )}
               </div>
