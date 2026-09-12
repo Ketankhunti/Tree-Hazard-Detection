@@ -169,3 +169,43 @@ export async function submitComplaint(input: {
   }
   return res.json();
 }
+
+/**
+ * AI hazard analysis result from the backend LLM.
+ */
+export interface AIHazardAnalysis {
+  dangerScore: number;
+  hazards: { label: string; points: number; source: "image" }[];
+  isUnsure: boolean;
+  textImageConflict: boolean;
+  confidence: number;
+  reasoning: string;
+  hasImage: boolean;
+  summary: string;
+}
+
+/**
+ * Analyze a complaint's hazard level using the backend LLM.
+ * Sends the complaint text + photo (by complaintId lookup or direct upload).
+ */
+export async function analyzeHazard(input: {
+  complaintText: string;
+  complaintId?: string;
+  photo?: File;
+}): Promise<AIHazardAnalysis> {
+  const formData = new FormData();
+  formData.append("complaintText", input.complaintText);
+  if (input.complaintId) formData.append("complaintId", input.complaintId);
+  if (input.photo) formData.append("photos", input.photo);
+
+  const res = await fetch(`${API_BASE}/analyze-hazard`, {
+    method: "POST",
+    body: formData,
+    signal: AbortSignal.timeout(120000),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+}

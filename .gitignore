@@ -18,6 +18,9 @@ dist-ssr
 .env.*.local
 backend/.env
 
+# Uploaded photos (runtime data, not source)
+backend/uploads/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

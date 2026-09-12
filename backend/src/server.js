@@ -27,6 +27,7 @@ import {
   getHalifaxTreeInventory,
 } from "./complaintGenerator.js";
 import { supabase } from "./supabaseClient.js";
+import { analyzeHazard } from "./llmClient.js";
 
 const PORT = process.env.PORT || 3001;
 const CORS_HEADERS = {
@@ -274,11 +275,11 @@ const server = http.createServer(async (req, res) => {
   }
 
   const url = new URL(req.url, `http://localhost:${PORT}`);
-  const path = url.pathname;
+  const reqPath = url.pathname;
 
   try {
     // Health check
-    if (path === "/api/health") {
+    if (reqPath === "/api/health") {
       return sendJson(res, 200, {
         status: "ok",
         timestamp: new Date().toISOString(),
@@ -287,7 +288,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     // Get all complaints (enriched with real HRM tree data + citizen submissions)
-    if (path === "/api/complaints" && req.method === "GET") {
+    if (reqPath === "/api/complaints" && req.method === "GET") {
       const hrmComplaints = await getCached("complaints", () =>
         generateComplaintsFromHRM(20)
       );
@@ -298,7 +299,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     // Submit a new citizen complaint
-    if (path === "/api/complaints" && req.method === "POST") {
+    if (reqPath === "/api/complaints" && req.method === "POST") {
       const body = await readBody(req);
       const contentType = req.headers["content-type"] || "";
 
@@ -334,7 +335,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     // Get single complaint by ID
-    const complaintMatch = path.match(/^\/api\/complaints\/(.+)$/);
+    const complaintMatch = reqPath.match(/^\/api\/complaints\/(.+)$/);
     if (complaintMatch && req.method === "GET") {
       const id = complaintMatch[1];
       // Check citizen complaints first (Supabase with in-memory fallback)
@@ -350,25 +351,72 @@ const server = http.createServer(async (req, res) => {
     }
 
     // Get full tree inventory for map
-    if (path === "/api/trees") {
+    if (reqPath === "/api/trees") {
       const trees = await getCached("trees", () => getHalifaxTreeInventory());
       return sendJson(res, 200, { trees, count: trees.length });
     }
 
     // Get recent tree-related 311 calls
-    if (path === "/api/311-calls") {
+    if (reqPath === "/api/311-calls") {
       const calls = await getCached("311-calls", () => fetchTree311Calls(50));
       return sendJson(res, 200, { calls, count: calls.length });
     }
 
     // Get 311 call statistics
-    if (path === "/api/311-stats") {
+    if (reqPath === "/api/311-stats") {
       const stats = await getCached("311-stats", () => fetchTree311Stats());
       return sendJson(res, 200, stats);
     }
 
+    // AI hazard analysis — analyze a complaint's text + photo with the LLM
+    if (reqPath === "/api/analyze-hazard" && req.method === "POST") {
+      const body = await readBody(req);
+      const contentType = req.headers["content-type"] || "";
+
+      let complaintText, photoPath;
+
+      if (contentType.startsWith("multipart/form-data")) {
+        const boundary = contentType.match(/boundary=(.+)/)?.[1];
+        if (!boundary) return sendError(res, 400, "Missing multipart boundary");
+        const parsed = parseMultipart(body, boundary);
+        complaintText = parsed.fields.complaintText || "";
+        const photoFile = (parsed.files.photos || parsed.files.photo || [])[0];
+        if (photoFile) {
+          // Save temp file for LLM to read
+          const tempName = `llm-temp-${Date.now()}.${photoFile.filename.match(/\.(\w+)$/)?.[1] || "jpg"}`;
+          photoPath = path.join(UPLOAD_DIR, tempName);
+          fs.writeFileSync(photoPath, photoFile.data);
+        }
+      } else {
+        try {
+          const json = JSON.parse(body.toString());
+          complaintText = json.complaintText || "";
+          // If a complaintId is provided, look up its saved photo
+          if (json.complaintId) {
+            const complaint = await fetchCitizenComplaintById(json.complaintId);
+            if (complaint?.photoUrl) {
+              photoPath = path.join(UPLOAD_DIR, path.basename(complaint.photoUrl));
+            }
+          }
+        } catch {
+          return sendError(res, 400, "Invalid JSON body");
+        }
+      }
+
+      if (!complaintText || complaintText.trim().length < 5)
+        return sendError(res, 400, "complaintText is required");
+
+      try {
+        const result = await analyzeHazard(complaintText, photoPath);
+        return sendJson(res, 200, result);
+      } catch (err) {
+        console.error("AI analysis failed:", err.message);
+        return sendError(res, 500, `AI analysis failed: ${err.message}`);
+      }
+    }
+
     // Unknown endpoint
-    return sendError(res, 404, `Endpoint not found: ${path}`);
+    return sendError(res, 404, `Endpoint not found: ${reqPath}`);
   } catch (err) {
     console.error("Server error:", err);
     return sendError(res, 500, err.message);
