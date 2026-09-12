@@ -2,31 +2,31 @@ import crypto from "node:crypto";
 
 import { z } from "zod";
 
-import { classifyComplaint, fuseClassification } from "../engine/scoring";
-import { getDb } from "./db";
+import { classifyComplaint, fuseClassification } from "@/backend/domain/scoring";
+import { getDb } from "@/backend/db/client";
 import {
   findDuplicateCandidates,
   pickAutoLink,
   type DuplicateCandidate,
-} from "./duplicates";
-import { extractGps } from "./exif";
-import { resolveLocation } from "./geocode";
+} from "@/backend/domain/duplicates";
+import { extractGps } from "@/backend/services/exif";
+import { resolveLocation } from "@/backend/services/geocode";
 import {
   insertImage,
   insertRequest,
   listOpenRequests,
   recordStatusChange,
   saveClassification,
-} from "./repository";
+} from "@/backend/db/repository";
 import {
   ACCEPTED_MIME_TYPES,
   MAX_IMAGE_BYTES,
   filenameFor,
   newImageId,
   writeImage,
-} from "./storage";
-import type { Classification, RequestStatus } from "./types";
-import { analyzeImage, canAnalyze } from "./vision";
+} from "@/backend/services/storage";
+import type { Classification, RequestStatus } from "@/shared/types";
+import { analyzeImage, canAnalyze } from "@/backend/services/vision";
 
 /**
  * The submission pipeline.

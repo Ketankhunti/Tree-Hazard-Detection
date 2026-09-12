@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CheckCircle2, Copy, Mail, TreePine } from "lucide-react";
 
-import { getRequest } from "@/lib/repository";
+import { getRequest } from "@/backend/db/repository";
 
 export const dynamic = "force-dynamic";
 

@@ -1,4 +1,4 @@
-import type { ScoredRequest } from "@/lib/types";
+import type { ScoredRequest } from "@/shared/types";
 
 /**
  * One-page US Letter field assessment sheet.

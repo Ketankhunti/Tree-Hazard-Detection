@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { fixtures } from "../seed/fixtures";
+import { fixtures } from "@/backend/seed/fixtures";
 import {
   applyEscalation,
   assess,

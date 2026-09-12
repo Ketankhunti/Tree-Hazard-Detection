@@ -1,8 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { jsonSchemaOutputFormat } from "@anthropic-ai/sdk/helpers/json-schema";
 
-import { config, hasVision } from "./config";
-import type { HazardId, ImageFindings } from "./types";
+import { config, hasVision } from "@/backend/config";
+import type { HazardId, ImageFindings } from "@/shared/types";
 
 /**
  * Vision pass over a submitted photo.

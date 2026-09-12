@@ -5,7 +5,7 @@ import {
   submitRequest,
   validatePhoto,
   type SubmittedPhoto,
-} from "@/lib/intake";
+} from "@/backend/services/intake";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

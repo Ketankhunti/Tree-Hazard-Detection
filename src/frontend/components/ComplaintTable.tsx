@@ -2,7 +2,7 @@ import { ArrowDown, ArrowUp, ChevronRight, SearchX } from "lucide-react";
 
 import { PriorityBadge, ReviewBadge } from "./PriorityBadge";
 import { ScoreBar } from "./ScoreBar";
-import type { ScoredRequest } from "@/lib/types";
+import type { ScoredRequest } from "@/shared/types";
 
 export type SortKey =
   | "finalScore"

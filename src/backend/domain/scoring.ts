@@ -1,3 +1,9 @@
+import {
+  PRIORITY_THRESHOLDS,
+  WAIT_SATURATION_DAYS,
+  WEIGHTS,
+  getPriorityLevel,
+} from "@/shared/scoring-config";
 import type {
   Assessment,
   Classification,
@@ -7,7 +13,7 @@ import type {
   ImageFindings,
   PriorityLevel,
   ReviewStatus,
-} from "../lib/types";
+} from "@/shared/types";
 
 /**
  * Deterministic triage engine.
@@ -31,6 +37,9 @@ import type {
 
 /** Bump when rules change so persisted rows can be identified as stale. */
 export const ENGINE_VERSION = "fused-v1";
+
+// The weighting contract is defined once in `shared` because the UI prints it.
+export { WEIGHTS, WAIT_SATURATION_DAYS, getPriorityLevel, PRIORITY_THRESHOLDS };
 
 // ---------------------------------------------------------------------------
 // Danger score - 50%
@@ -201,8 +210,6 @@ export function calculateDangerScore(hazards: DetectedHazard[]): number {
 // ---------------------------------------------------------------------------
 // Wait time score - 25%
 // ---------------------------------------------------------------------------
-
-export const WAIT_SATURATION_DAYS = 180;
 
 export function calculateWaitScore(daysWaiting: number): number {
   const raw = (Math.max(daysWaiting, 0) / WAIT_SATURATION_DAYS) * 100;
@@ -544,20 +551,6 @@ export function fuseClassification(
 // ---------------------------------------------------------------------------
 // Priority levels and weights
 // ---------------------------------------------------------------------------
-
-export function getPriorityLevel(finalScore: number): PriorityLevel {
-  if (finalScore >= 80) return "Critical";
-  if (finalScore >= 60) return "High";
-  if (finalScore >= 35) return "Medium";
-  return "Low";
-}
-
-export const WEIGHTS = {
-  danger: 0.5,
-  wait: 0.25,
-  location: 0.15,
-  review: 0.1,
-} as const;
 
 // ---------------------------------------------------------------------------
 // Imminent-hazard escalation floor

@@ -14,7 +14,7 @@ import {
 } from "./ComplaintTable";
 import { DEFAULT_FILTERS, FilterBar, type Filters } from "./FilterBar";
 import { SummaryCard } from "./SummaryCard";
-import type { ScoredRequest } from "@/lib/types";
+import type { ScoredRequest } from "@/shared/types";
 
 /**
  * Client half of the admin queue. Rows arrive already scored and ranked from

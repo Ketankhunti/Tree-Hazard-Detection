@@ -1,6 +1,6 @@
 import { X } from "lucide-react";
 
-import type { PriorityLevel, ReviewStatus } from "@/lib/types";
+import type { PriorityLevel, ReviewStatus } from "@/shared/types";
 
 export type PriorityFilter = "All" | PriorityLevel;
 export type ReviewFilter = "All" | ReviewStatus;

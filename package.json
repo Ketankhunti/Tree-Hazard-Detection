@@ -6,8 +6,8 @@
     "dev": "next dev -p 5177",
     "build": "next build",
     "start": "next start -p 5177",
-    "db:seed": "tsx src/seed/run.ts",
-    "db:reset": "tsx src/seed/run.ts --reset",
+    "db:seed": "tsx src/backend/seed/run.ts",
+    "db:reset": "tsx src/backend/seed/run.ts --reset",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

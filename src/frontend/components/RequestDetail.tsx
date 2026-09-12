@@ -12,16 +12,19 @@ import {
 } from "lucide-react";
 
 import { AssessmentBreakdown } from "./AssessmentBreakdown";
+import { DayPlan } from "./DayPlan";
 import { HazardPoster } from "./HazardPoster";
 import { HazardTag } from "./HazardTag";
 import { PhotoAssessment } from "./PhotoAssessment";
 import { PriorityBadge, ReviewBadge } from "./PriorityBadge";
+import { StatusControl } from "./StatusControl";
+import type { BundlePlan } from "@/shared/types";
 import type {
   Feedback,
   RequestImage,
   ScoredRequest,
   StatusChange,
-} from "@/lib/types";
+} from "@/shared/types";
 
 /** Stylized street grid + pin. Deliberately not a real mapping dependency. */
 function MapPlaceholder({ request }: { request: ScoredRequest }) {
@@ -77,12 +80,21 @@ export function RequestDetail({
   history,
   duplicates,
   feedback,
+  plan,
+  otherOpen,
+  queueRank,
+  ranks,
 }: {
   request: ScoredRequest;
   images: RequestImage[];
   history: StatusChange[];
   duplicates: ScoredRequest[];
   feedback: Feedback[];
+  /** Null for a closed request - there is nothing left to schedule. */
+  plan: BundlePlan | null;
+  otherOpen: ScoredRequest[];
+  queueRank: number | null;
+  ranks: Record<string, number>;
 }) {
   const { assessment } = request;
 
@@ -105,9 +117,12 @@ export function RequestDetail({
             <p className="mt-1 text-lg text-slate-700">{request.address}</p>
             <p className="font-mono text-xs text-slate-500">
               {request.neighborhood} &middot; {request.reference}
+              {queueRank !== null && (
+                <> &middot; queue position #{String(queueRank).padStart(2, "0")}</>
+              )}
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <PriorityBadge priority={assessment.priority} size="lg" />
             <ReviewBadge status={assessment.reviewStatus} size="lg" />
             <button
@@ -119,6 +134,16 @@ export function RequestDetail({
               Print Poster
             </button>
           </div>
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border border-slate-200 bg-slate-50 px-4 py-3">
+          <div>
+            <p className="label-caps">Crew action</p>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Completed work leaves the inspection queue and notifies the resident.
+            </p>
+          </div>
+          <StatusControl requestId={request.id} status={request.status} />
         </div>
 
         <section className="mt-5 grid grid-cols-2 gap-5 border border-slate-200 bg-slate-50 p-4 sm:grid-cols-3 lg:grid-cols-6">
@@ -192,6 +217,8 @@ export function RequestDetail({
                 <AssessmentBreakdown assessment={assessment} />
               </div>
             </section>
+
+            {plan && <DayPlan plan={plan} others={otherOpen} ranks={ranks} />}
 
             <PhotoAssessment assessment={assessment} />
 

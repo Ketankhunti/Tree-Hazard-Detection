@@ -1,6 +1,6 @@
-import { config } from "./config";
-import { distanceMeters } from "./geo";
-import type { ScoredRequest, TreeRequest } from "./types";
+import { config } from "@/backend/config";
+import { distanceMeters } from "@/shared/geo";
+import type { ScoredRequest, TreeRequest } from "@/shared/types";
 
 /**
  * Same-tree detection.

@@ -1,6 +1,6 @@
 import { AlertTriangle } from "lucide-react";
 
-import type { DetectedHazard } from "@/lib/types";
+import type { DetectedHazard } from "@/shared/types";
 
 export function HazardTag({ hazard }: { hazard: DetectedHazard }) {
   return (

@@ -1,4 +1,4 @@
-import { getDb } from "./db";
+import { getDb } from "@/backend/db/client";
 import {
   CLOSED_STATUSES,
   OPEN_STATUSES,
@@ -14,8 +14,8 @@ import {
   type ScoredRequest,
   type StatusChange,
   type TreeRequest,
-} from "./types";
-import { daysSince, scoreRequest } from "../engine/scoring";
+} from "@/shared/types";
+import { daysSince, scoreRequest } from "@/backend/domain/scoring";
 
 /**
  * Every read path goes through here. Rows come out of SQLite in snake_case and

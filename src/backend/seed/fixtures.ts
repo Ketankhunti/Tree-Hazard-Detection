@@ -1,4 +1,4 @@
-import type { LocationSource, RequestStatus } from "../lib/types";
+import type { LocationSource, RequestStatus } from "@/shared/types";
 
 /**
  * Seed dataset for the Halifax tree-triage demo.

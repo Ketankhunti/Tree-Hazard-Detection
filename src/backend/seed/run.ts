@@ -10,8 +10,8 @@
  * report is where it shows up.
  */
 
-import { dropAll, getDb } from "../lib/db";
-import { distanceMeters, formatDistance } from "../lib/geo";
+import { dropAll, getDb } from "@/backend/db/client";
+import { distanceMeters, formatDistance } from "@/shared/geo";
 import {
   insertFeedback,
   insertImage,
@@ -19,16 +19,16 @@ import {
   listOpenRequests,
   recordStatusChange,
   saveClassification,
-} from "../lib/repository";
+} from "@/backend/db/repository";
 import {
   ensureUploadDir,
   filenameFor,
   newImageId,
   writeImage,
-} from "../lib/storage";
-import { classifyComplaint } from "../engine/scoring";
-import type { RequestStatus } from "../lib/types";
-import { fixtures, type Fixture } from "./fixtures";
+} from "@/backend/services/storage";
+import { classifyComplaint } from "@/backend/domain/scoring";
+import type { RequestStatus } from "@/shared/types";
+import { fixtures, type Fixture } from "@/backend/seed/fixtures";
 
 const PLACEHOLDER_MIME = "image/svg+xml";
 

@@ -45,27 +45,33 @@ Everything is optional — copy `.env.example` to `.env.local` to change any of 
 
 ## Architecture
 
+Three layers, enforced by one rule: **`frontend/` never imports from
+`backend/`.** Anything both sides need lives in `shared/`.
+
 ```
 src/
-  app/
-    report/                 public submission + confirmation
-    admin/                  inspection queue + request detail
-    api/requests/           intake endpoint (multipart, optional photo)
-    api/images/[id]/        photo serving
-  engine/scoring.ts         pure scoring engine - no React, no I/O
-  lib/
-    db.ts                   SQLite schema + additive migrations
-    repository.ts           every query; snake_case in, camelCase out
-    intake.ts               the submission pipeline
-    vision.ts               photo analysis
-    geocode.ts              address -> coordinates
-    exif.ts                 photo GPS extraction
-    duplicates.ts           same-tree detection
+  backend/                  server-only
+    config.ts               env reading; every value optional
+    db/client.ts            SQLite connection, schema, additive migrations
+    db/repository.ts        every query; snake_case in, camelCase out
+    domain/scoring.ts       hazard rules, classification, fusion, escalation
+    domain/bundling.ts      same-day work planner
+    domain/duplicates.ts    same-tree detection
+    services/               intake, vision, geocode, exif, storage
+    seed/                   engineered demo dataset + seeder
+  shared/                   pure data and helpers, safe in both bundles
+    types.ts                domain types, incl. server -> client prop shapes
+    scoring-config.ts       WEIGHTS and priority bands - the displayed contract
     geo.ts                  distance maths
-    storage.ts              photo files on disk
-  seed/                     engineered demo dataset
-  components/               UI
+  frontend/
+    components/
+    styles/globals.css
+  app/                      Next.js routing only; pages compose, not compute
 ```
+
+`WEIGHTS` and the plan types sit in `shared` because the UI prints them — one
+definition means the number the engine multiplies by is provably the number the
+arborist reads on the sheet.
 
 ### Classification is stored; scoring is not
 

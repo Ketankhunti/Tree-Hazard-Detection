@@ -1,0 +1,147 @@
+# Which Tree Falls First — Halifax Urban Forestry
+
+Inspection triage for HRM Urban Forestry. ~290 tree requests are open; crews
+reach a handful a week. Residents report trees through a public form; the system
+reads the description and photo, scores the hazard, ranks the backlog, and
+suggests what else a crew can clear on the same trip.
+
+**The tool decides inspection ORDER. It never decides whether a tree is
+dangerous.** Every user-facing surface must preserve that distinction — it is a
+product requirement, not a disclaimer.
+
+## Commands
+
+```bash
+npm install
+npm run db:reset   # drop, recreate, seed, and print a verification report
+npm run dev        # http://localhost:5177
+npm run build      # production build
+npm run typecheck  # tsc --noEmit
+npm test           # vitest (scoring engine)
+npm run db:seed    # seed without wiping; no-op if already seeded
+```
+
+Runs with an **empty environment** — no API key, no network. Every external
+dependency degrades to a local fallback. Keep it that way.
+
+## Layer structure
+
+```
+src/
+  backend/     server-only. Never imported by anything under frontend/.
+    config.ts            env reading; all values optional
+    db/client.ts         SQLite connection, schema, additive migrations
+    db/repository.ts     every query; snake_case in, camelCase out
+    domain/scoring.ts    hazard rules, classification, fusion, escalation
+    domain/bundling.ts   same-day work planner
+    domain/duplicates.ts same-tree detection
+    services/            intake, vision, geocode, exif, storage
+    seed/                fixtures + seeder (dev tooling)
+  shared/      safe in both bundles. Pure data and helpers, no I/O.
+    types.ts             domain types, incl. the server->client prop shapes
+    scoring-config.ts    WEIGHTS, priority bands — the displayed contract
+    geo.ts               distance maths and formatting
+  frontend/    React only.
+    components/
+    styles/globals.css
+  app/         Next.js routing only. Pages compose; they do not hold logic.
+```
+
+**The one rule:** `frontend/` must never import from `backend/`. If a component
+needs a value the engine owns, that value belongs in `shared/`. This is why
+`WEIGHTS` and `BundlePlan` live in `shared` — the UI prints them.
+
+`backend/` may import `shared/`. `shared/` imports nothing from either side.
+
+## Architectural invariants
+
+**Classification is persisted; scoring is not.**
+
+```
+classifyComplaint(text) -> Classification   expensive, runs once, STORED
+scoreRequest(cls, ctx)  -> Assessment       cheap, recomputed EVERY READ
+```
+
+Wait time changes daily, so a final score written to the database would be wrong
+by morning. Only findings derived from the complaint and photo are stored. Never
+add `final_score` as a column.
+
+**Queue ordering happens in JS, not SQL**, for the same reason.
+
+**All text/image understanding sits behind two functions** —
+`classifyComplaint()` and `analyzeImage()`. Swapping either for a different
+model must not require touching the weighting, thresholds, reasoning, or UI.
+
+## Scoring
+
+```
+finalScore = danger*0.50 + wait*0.25 + location*0.15 + review*0.10
+```
+
+Bands: Critical 80-100, High 60-79, Medium 35-59, Low 0-34.
+
+**The imminent-hazard escalation floor.** The weighted formula alone cannot
+express urgency for a new report: a tree actively falling onto a house, reported
+today on a residential street, tops out at 56 → "Medium". Backlog age would
+outrank an active hazard. So danger sets a *floor* — danger ≥70 floors at 80,
+danger ≥50 floors at 60. It never lowers a score and never alters the four
+component scores. When it binds, the UI and the poster say so and show the
+pre-escalation weighted score.
+
+**"Unsure" is not "dangerous."** The review flag means the system lacks
+information, not that the tree is safe or hazardous. Priority is computed
+independently; the two are always displayed side by side, never substituted.
+
+**Photo/text fusion.** Both produce a 0-100 severity on the same hazard
+vocabulary, so fusion is arithmetic. The fused score is never *lower* than the
+text score — under-ranking a described hazard is the expensive mistake. Text
+claiming more than the photo supports keeps the higher score but is flagged; a
+photo that resolves a vague description clears the flag.
+
+**Bundling is not "the five nearest."** Nearest-five returns five cosmetic
+prunings while a High-priority tree sits 400m away. Ranking is severity earned
+per hour of shift consumed, discounted by a 400m-half-life proximity factor.
+Because a Critical removal is 5-6h of an 8h shift, the planner reports two
+groups: what fits today, and the follow-up trip.
+
+## Conventions
+
+- Comments explain **why**, not what. Non-obvious tradeoffs get a short note;
+  obvious code gets none.
+- Government-tool visual language: white, light grey panels, subtle borders,
+  restrained colour, data-dense, square corners. No gradients, no heavy shadows,
+  no generic SaaS look.
+- Priority colours are fixed: Critical red, High orange, Medium amber, Low grey,
+  Unsure purple.
+- Seeded emails are always `@example.com`. Nothing in fixtures may reach a real
+  inbox.
+- Every external call (vision, geocoding) must have a local fallback and must
+  never fail a resident's submission.
+
+## Print
+
+`.no-print` wraps the entire app; the poster sits outside it. In print,
+`.no-print { display: none }` leaves only the one-page sheet. `@page` is US
+Letter portrait, 0.5in margins; the poster is 7.5in wide and must stay inside
+10in of height. Do not wrap the poster in a `.no-print` ancestor.
+
+## Gotchas
+
+- `better-sqlite3` is a native module — it is listed in
+  `experimental.serverComponentsExternalPackages`. Do not import it from a
+  client component.
+- Server actions cannot receive functions as props. Pass plain records
+  (this is why the queue rank map crosses the boundary as `Record<string, number>`).
+- `server-only` throws under plain `tsx`, which breaks the seeder. The layer
+  rule is enforced by convention and review, not by that package.
+- The SDK's zod output helper tracks zod v4 while the app uses v3 for form
+  validation; vision uses `jsonSchemaOutputFormat` with a raw JSON Schema.
+- Seed geography is **deliberate**, not random. `npm run db:reset` prints the
+  distances. If a change makes the #1 request lose its nearby cluster, the
+  bundling demo breaks — that report is the guard.
+
+## Status
+
+See `task.md` for per-task status. Done: T1-T5, T7-T10. Partial: T6 (no admin UI
+to confirm/reject suggested duplicates), T11 (feedback stored, no email sent).
+Not started: T12 — **`/admin` is currently open to anyone.**

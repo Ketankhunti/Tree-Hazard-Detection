@@ -1,4 +1,4 @@
-import type { PriorityLevel, ReviewStatus } from "@/lib/types";
+import type { PriorityLevel, ReviewStatus } from "@/shared/types";
 
 const PRIORITY_CLASSES: Record<PriorityLevel, string> = {
   Critical: "bg-red-600 text-white border-red-700",

@@ -22,6 +22,19 @@ export const config = {
   geocoderUserAgent:
     process.env.GEOCODER_USER_AGENT ?? "halifax-tree-triage/2.0 (demo)",
 
+  crew: {
+    /** Length of one crew shift, in hours. */
+    shiftHours: Number(process.env.CREW_SHIFT_HOURS ?? 8),
+    /** Hard cap on how far a bundled job may sit from the anchor. */
+    maxDetourMeters: Number(process.env.CREW_MAX_DETOUR_M ?? 1000),
+    /** Average urban travel speed, km/h, including stops and parking. */
+    travelSpeedKmh: Number(process.env.CREW_TRAVEL_KMH ?? 22),
+    /** Mobilize/demobilize overhead charged to each additional site, minutes. */
+    setupMinutesPerSite: Number(process.env.CREW_SETUP_MINUTES ?? 20),
+    /** Most jobs to recommend alongside the anchor. */
+    maxRecommendations: Number(process.env.CREW_MAX_RECOMMENDATIONS ?? 5),
+  },
+
   duplicates: {
     /** Two reports closer than this are candidates for being the same tree. */
     radiusMeters: Number(process.env.DUPLICATE_RADIUS_M ?? 90),

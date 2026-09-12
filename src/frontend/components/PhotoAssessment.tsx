@@ -1,6 +1,6 @@
 import { Eye, EyeOff, ImageOff, ScanSearch, TriangleAlert } from "lucide-react";
 
-import type { Assessment, FusionVerdict } from "@/lib/types";
+import type { Assessment, FusionVerdict } from "@/shared/types";
 
 const VERDICT_STYLE: Record<
   FusionVerdict,

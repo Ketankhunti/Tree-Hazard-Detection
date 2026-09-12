@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
-import { getImage } from "@/lib/repository";
-import { readImage } from "@/lib/storage";
+import { getImage } from "@/backend/db/repository";
+import { readImage } from "@/backend/services/storage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

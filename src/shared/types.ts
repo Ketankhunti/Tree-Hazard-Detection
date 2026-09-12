@@ -218,3 +218,49 @@ export type ScoredRequest = TreeRequest & {
   imageCount: number;
   duplicateCount: number;
 };
+
+// ---------------------------------------------------------------------------
+// Same-day work planning
+// ---------------------------------------------------------------------------
+
+// These shapes are produced by the backend planner and rendered by the
+// frontend, so they are part of the shared contract rather than engine
+// internals. The algorithm that fills them stays in backend/domain/bundling.ts.
+
+export interface BundleCandidate {
+  request: ScoredRequest;
+  distanceMeters: number;
+  travelMinutes: number;
+  /** Crew hours for the job itself, excluding travel. */
+  jobHours: number;
+  /** Job hours plus travel overhead - what the shift actually pays. */
+  totalHours: number;
+  /** Final score per hour consumed, discounted by how far off-route it is. */
+  areaValue: number;
+  /** True when this fits inside the hours left after the anchor. */
+  fitsToday: boolean;
+  reason: string;
+}
+
+export interface BundlePlan {
+  anchor: ScoredRequest;
+  shiftHours: number;
+  anchorHours: number;
+  /** Shift hours left after the anchor job. */
+  remainingHours: number;
+  /** Best work in the area, whether or not it fits today. 3-5 entries. */
+  recommended: BundleCandidate[];
+  /** The subset that fits, in the order the crew should drive it. */
+  selected: BundleCandidate[];
+  /** Recommended work that does not fit today - the follow-up trip. */
+  followUp: BundleCandidate[];
+  /** Hours consumed by the scheduled jobs (job + travel). */
+  bundledHours: number;
+  /** Hours still unused after the anchor and the bundle. */
+  slackHours: number;
+  /** Open requests considered before the distance filter. */
+  consideredCount: number;
+  /** Why no plan could be produced, when `selected` is empty. */
+  note: string | null;
+}
+

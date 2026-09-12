@@ -1,6 +1,6 @@
 import { ScoreBar } from "./ScoreBar";
-import { WEIGHTS } from "@/engine/scoring";
-import type { Assessment } from "@/lib/types";
+import { WEIGHTS } from "@/shared/scoring-config";
+import type { Assessment } from "@/shared/types";
 
 const ROWS: Array<{ key: keyof Assessment["breakdown"]; label: string; weight: number }> = [
   { key: "danger", label: "Danger", weight: WEIGHTS.danger },

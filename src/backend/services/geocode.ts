@@ -1,5 +1,5 @@
-import { config } from "./config";
-import type { LocationSource } from "./types";
+import { config } from "@/backend/config";
+import type { LocationSource } from "@/shared/types";
 
 /**
  * Address -> coordinates.
