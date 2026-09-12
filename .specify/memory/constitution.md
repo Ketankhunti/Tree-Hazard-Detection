@@ -1,50 +1,46 @@
-# [PROJECT_NAME] Constitution
-<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
+# Tree Hazard Detection Constitution
 
 ## Core Principles
 
-### [PRINCIPLE_1_NAME]
-<!-- Example: I. Library-First -->
-[PRINCIPLE_1_DESCRIPTION]
-<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
+### I. MVP-First (NON-NEGOTIABLE)
+This is a hackathon MVP with a ~4 hour build window. Prioritize a polished working demo over completeness. Ship a functional, visually impressive application that runs immediately after `npm install && npm run dev`. No login, no API keys, no external backend dependencies. All data is local mock data. All scoring runs in the browser.
 
-### [PRINCIPLE_2_NAME]
-<!-- Example: II. CLI Interface -->
-[PRINCIPLE_2_DESCRIPTION]
-<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
+### II. Deterministic Explainable Scoring
+The prioritization engine must be deterministic and fully explainable. Every score component (Danger 50%, Wait Time 25%, Location Impact 15%, Human Review 10%) must produce a 0–100 value with a clear, auditable trail. The reasoning text must be generated from actual detected factors — never hardcoded independently of the scoring system. The engine must be structured so an LLM/API can replace the deterministic classifier in the future without changing the UI layer.
 
-### [PRINCIPLE_3_NAME]
-<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
-[PRINCIPLE_3_DESCRIPTION]
-<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
+### III. Separation of Concerns
+Strict separation between: mock data (`data/`), scoring engine (`lib/`), types/interfaces (`types/`), components (`components/`), and pages (`pages/`). Scoring logic must never be duplicated inside components. The scoring engine must be independently testable. Reusable components (PriorityBadge, ScoreBar, SummaryCard, ComplaintTable, FilterBar, HazardTag, AssessmentBreakdown, HazardPoster) must not contain business logic.
 
-### [PRINCIPLE_4_NAME]
-<!-- Example: IV. Integration Testing -->
-[PRINCIPLE_4_DESCRIPTION]
-<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
+### IV. Government-Grade UX
+The UI must feel like a serious municipal operations tool — not a generic SaaS app. White background, light gray panels, subtle borders, dark text, restrained color use, professional typography, data-dense layout. No excessive gradients, shadows, rounded cards, or cartoonish illustrations. High contrast for accessibility. Responsive across desktop, tablet, and mobile.
 
-### [PRINCIPLE_5_NAME]
-<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
-[PRINCIPLE_5_DESCRIPTION]
-<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
+### V. Print-Ready Field Assessment
+The Hazard Assessment Poster must print cleanly on US Letter (8.5 × 11 inch) portrait paper with proper margins and no clipped content. Print CSS must hide all non-poster content (navigation, dashboard, filters, buttons, map). The poster must include the mandatory disclaimer: "Automated triage assessment — final determination requires qualified arborist inspection."
 
-## [SECTION_2_NAME]
-<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
+## Technology Stack
 
-[SECTION_2_CONTENT]
-<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
+- **Framework**: React + TypeScript + Vite
+- **Styling**: Tailwind CSS
+- **Icons**: Lucide React
+- **Data**: Local mock data (20 realistic Halifax tree complaints)
+- **Scoring**: Deterministic local engine (no API calls)
+- **No external dependencies**: No auth, no database, no backend server, no API keys
 
-## [SECTION_3_NAME]
-<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
+## Development Workflow
 
-[SECTION_3_CONTENT]
-<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
+1. Build mock data first (20 complaints with varied severity)
+2. Implement and unit-test the scoring engine independently
+3. Build reusable UI components
+4. Compose dashboard and detail pages
+5. Add print CSS and poster component
+6. Verify: sorting, filtering, detail navigation, scoring, hazard detection, Unsure detection, summary stats, print mode
 
 ## Governance
-<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
 
-[GOVERNANCE_RULES]
-<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
+- This constitution supersedes all other practices for this project
+- The system must NOT claim a tree is definitely dangerous — it is a prioritization and triage tool
+- "Unsure" means insufficient information for human review, NOT the same as "dangerous"
+- If a complaint is both high-scoring and uncertain, display BOTH priority and review status
+- All implementation decisions not specified in the prompt should be resolved with the most sensible choice rather than asking for clarification
 
-**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
-<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+**Version**: 1.0.0 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-09-12
