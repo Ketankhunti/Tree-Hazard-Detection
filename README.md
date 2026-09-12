@@ -1,32 +1,241 @@
-# React + TypeScript + Vite
+# Which Tree Falls First
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Inspection triage for Halifax Regional Municipality Urban Forestry.
 
-Currently, two official plugins are available:
+290 tree requests are open. Every one needs a site visit, and crews reach only a
+handful a week. Residents report trees through a public form; the system reads
+the description and the photo, scores the hazard, and ranks the backlog so the
+most dangerous trees are inspected first.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+It does **not** decide whether a tree is dangerous. It decides what order a
+qualified arborist should look at them in.
 
-## React Compiler
+## Run it
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+npm install
+cp .env.example .env.local   # add your Supabase DATABASE_URL
+npm run db:check             # verify the connection (diagnoses Supabase gotchas)
+npm run db:reset             # create the schema and seed it
+npm run dev                  # http://localhost:5177
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+The database is **Supabase (PostgreSQL)**. `DATABASE_URL` is the only required
+variable. Two things will bite you, so `npm run db:check` tests for both:
+
+- Use the **Session pooler** string (`aws-0-<region>.pooler.supabase.com:5432`,
+  user `postgres.<ref>`). The direct host `db.<ref>.supabase.co` is **IPv6-only**
+  and fails with `ENOTFOUND` on an IPv4 network — which looks like a bad project
+  ref but isn't.
+- **Do not append `?sslmode=require`.** pg >= 8.23 treats it as `verify-full`,
+  which rejects Supabase's certificate chain. TLS is enabled by the app itself.
+
+- `/` — public submission form (no login)
+- `/admin` — inspection queue, **behind a staff sign-in** (`admin` / `admin` by
+  default; see `ADMIN_USERNAME` / `ADMIN_PASSWORD`)
+- `/admin/requests/[id]` — full assessment and printable poster
+
+No API key is required. Photo analysis is skipped when one is absent and the
+app falls back to text-only triage; maps fall back to a coordinate plot.
+
+```bash
+npm run build      # production build
+npm run db:seed    # seed without wiping (no-op if already seeded)
+npm test           # scoring-engine tests
+```
+
+## Configuration
+
+Everything is optional — copy `.env.example` to `.env.local` to change any of it.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | unset | Enables photo analysis. Without it, text-only. |
+| `VISION_MODEL` | `claude-opus-5` | Model used to assess photos. |
+| `GOOGLE_MAPS_API_KEY` | unset | Geocoding API + Maps Static API. Without it: local gazetteer and a coordinate plot instead of street maps. Server-side only. |
+| `MAP_PROXY_SECRET` | the API key | Signs `/api/map` URLs so the basemap proxy is not free image hosting. |
+| `GEOCODER_URL` | unset | Legacy Nominatim fallback, used only when no Google key is set. |
+| `ADMIN_USERNAME` | `admin` | Staff sign-in for `/admin`. |
+| `ADMIN_PASSWORD` | `admin` | Change this for anything reachable from a network. |
+| `ADMIN_SESSION_SECRET` | `DATABASE_URL` | Signs the session cookie; setting it invalidates every session. |
+| `ADMIN_SESSION_HOURS` | `12` | Session lifetime — one shift. |
+| `DATABASE_URL` | — | **Required.** Supabase Postgres connection string. |
+| `DATABASE_SSL_STRICT` | `false` | Verify Supabase's TLS certificate chain. |
+| `DATABASE_POOL_MAX` | `10` | Pooled connections held by this process. |
+| `UPLOAD_DIR` | `var/uploads` | Photo storage, outside the web root. |
+
+## Architecture
+
+Three layers, enforced by one rule: **`frontend/` never imports from
+`backend/`.** Anything both sides need lives in `shared/`.
+
+```
+src/
+  backend/                  server-only
+    config.ts               env reading; every value optional
+    db/client.ts            Postgres pool, schema, additive migrations
+    db/repository.ts        every query; snake_case in, camelCase out
+    domain/scoring.ts       hazard rules, classification, fusion, escalation
+    domain/bundling.ts      same-day work planner
+    domain/duplicates.ts    same-tree detection
+    services/               intake, vision, geocode, staticmap, auth, exif, storage
+    seed/                   engineered demo dataset + seeder
+  shared/                   pure data and helpers, safe in both bundles
+    types.ts                domain types, incl. server -> client prop shapes
+    scoring-config.ts       WEIGHTS and priority bands - the displayed contract
+    geo.ts                  distance maths
+    map.ts                  Web Mercator projection for the basemap overlay
+  frontend/
+    components/
+    styles/globals.css
+  app/                      Next.js routing only; pages compose, not compute
+  middleware.ts             the /admin gate (covers pages and server actions)
+```
+
+`WEIGHTS` and the plan types sit in `shared` because the UI prints them — one
+definition means the number the engine multiplies by is provably the number the
+arborist reads on the sheet.
+
+### Database
+
+Supabase-hosted PostgreSQL, accessed with `pg` (node-postgres) — no ORM, raw SQL
+in `backend/db/repository.ts`. Five tables: `requests`, `assessments`, `images`,
+`status_history`, `feedback`.
+
+Two driver behaviours the repository mappers absorb so callers never see them:
+
+- **`TIMESTAMPTZ` returns a JS `Date`.** The domain speaks ISO strings, so
+  `toIso()` normalises on the way out.
+- **`JSONB` returns already-parsed values** — never `JSON.parse` a jsonb column.
+  On the way *in* it must be `JSON.stringify`'d: node-postgres turns a JS array
+  into a Postgres *array literal*, which a jsonb column rejects, and `hazards`
+  is an array.
+
+`COUNT(*)` comes back as a string (bigint), hence `toCount()`.
+
+Status changes and classification writes run in explicit transactions;
+`setStatus` takes `SELECT ... FOR UPDATE` on the row so two dispatchers closing
+the same job serialise rather than recording a transition that never happened.
+
+### Classification is stored; scoring is not
+
+```
+classifyComplaint(text) -> Classification   expensive, runs once, PERSISTED
+scoreRequest(cls, ctx)  -> Assessment       cheap, recomputed EVERY READ
+```
+
+Wait time changes daily, so a final score written to the database would be wrong
+by the next morning. Only findings derived from the complaint and the photo are
+stored; the weighting, escalation and priority are always live.
+
+### How the score works
+
+```
+finalScore = danger * 0.50 + wait * 0.25 + location * 0.15 + review * 0.10
+```
+
+| Component | Weight | Source |
+|---|---|---|
+| Danger | 50% | Text rules fused with photo analysis, capped at 100 |
+| Wait time | 25% | `min(daysWaiting / 180 * 100, 100)` |
+| Location impact | 15% | Per-street table; major arterials score highest |
+| Human review | 10% | 100 when the report is too vague or ambiguous to triage |
+
+Priority bands: **Critical** 80-100, **High** 60-79, **Medium** 35-59, **Low** 0-34.
+
+### The imminent-hazard escalation floor
+
+The weighted formula alone cannot express urgency for a brand-new report. A tree
+actively falling onto a house, reported today on a residential street, tops out at:
+
+```
+danger 100*0.50 + wait 0*0.25 + location 40*0.15 + review 0*0.10 = 56  ->  "Medium"
+```
+
+Backlog age would outrank an active hazard, which is the wrong answer to the
+question this tool exists to answer. So danger sets a **floor** on the final
+score, the way severity rows work in a municipal risk matrix:
+
+- danger >= 70 -> floor of 80 (Critical)
+- danger >= 50 -> floor of 60 (High)
+
+The floor never lowers a score and never alters the four component scores. When
+it binds, the UI and the printed poster both say so and show the pre-escalation
+weighted score.
+
+### Fusing photo and description
+
+The photo is analyzed on the same 0-100 scale and the same hazard vocabulary the
+text rules use, so fusion is arithmetic rather than translation. The policy:
+
+| Situation | Score used | Review flag |
+|---|---|---|
+| No photo, or analysis unavailable | text | unchanged |
+| Photo and text agree (within 20) | higher of the two | unchanged |
+| Photo shows **more** than described | photo | unchanged |
+| Text claims **more** than the photo supports | text (the higher) | **flagged** |
+| Photo resolves a vague description | photo | **cleared** |
+| Photo unusable (not a tree, too dark) | text | **flagged** |
+
+The fused score is never lower than the text score: under-ranking a hazard
+someone described is the expensive mistake. Both source scores are always shown
+side by side in the admin UI, so a disagreement is visible rather than averaged
+away.
+
+### "Unsure" is not "dangerous"
+
+A report is flagged for human review when nothing observable can be scored. That
+raises the review component and shows a purple badge, but priority is computed
+independently — a vague report stays Low if nothing else is elevated. The two are
+displayed side by side, never substituted for one another.
+
+### Same-tree detection
+
+When a large tree comes down, a dozen neighbours report it. Left alone that fills
+the top of the queue with one tree. Three signals gate a merge — proximity,
+recency, and description overlap — because no single one is sufficient: a
+street-centroid geocode puts every address on a street at the same point, so
+proximity alone would merge the whole street. High-confidence matches are linked
+automatically and drop out of the queue; anything below the bar is surfaced as a
+suggestion for a human.
+
+### Location resolution
+
+1. **EXIF GPS** from the photo — the phone was actually there
+2. **Google Geocoding API** — house-number accuracy, and it reports its own
+   precision. A locality-centroid (`APPROXIMATE`) result is *discarded*: every
+   unrecognised address resolves to the same downtown point, which would stack
+   unrelated reports inside the 90 m duplicate radius and merge them into one tree
+3. **Local Halifax gazetteer** — offline, street-centroid accuracy
+4. **Nothing** — stored anyway, flagged for a manual pin, excluded from distance maths
+
+## Swapping the classifier
+
+All text understanding is behind one function: `classifyComplaint()` in
+`src/engine/scoring.ts`. Replace it with a model call returning the same
+`Classification` shape and the weighting, thresholds, reasoning, UI and poster
+keep working unchanged.
+
+## Printing
+
+"Print Poster" calls `window.print()`. Everything except the poster sits inside
+`.no-print`, which is `display: none` in print, so only the one-page assessment
+sheet reaches the printer. `@page` is US Letter portrait with 0.5in margins; the
+poster measures 7.5in wide and fits inside the 10in printable height.
+
+## Seed data
+
+The demo dataset is engineered, not random. `npm run db:reset` prints a
+verification report showing the ranked queue and the real distances between
+requests. It deliberately contains:
+
+- Five geographic clusters plus one isolated outlier
+- The **#1 ranked request inside a tight cluster**, with five same-day
+  candidates within 500 m — and those candidates are *not* the next five in
+  priority order
+- The **#2 ranked request 1.5 km away**, so it visibly cannot be bundled with #1
+- A pre-linked duplicate pair, and an unlinked near-duplicate pair
+- Completed and rejected records, one with resident feedback
+
+All seeded emails are `@example.com`. Nothing in the dataset can reach a real
+inbox.

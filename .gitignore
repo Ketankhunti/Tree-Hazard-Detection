@@ -28,3 +28,12 @@ backend/.env
 *.njsproj
 *.sln
 *.sw?
+
+# runtime data: database + uploaded photos
+/var
+.next
+
+# Temp upload files
+backend/uploads/
+var/
+tsconfig.tsbuildinfo
