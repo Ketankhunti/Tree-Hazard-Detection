@@ -24,8 +24,11 @@ const EQUATOR_METERS_PER_PIXEL = 156_543.03392;
  * slack. Clamping the range keeps that from degenerating into either a
  * street-corner crop or a view of the whole province.
  */
-const MIN_ZOOM = 11;
-const MAX_ZOOM = 18;
+export const MAP_ZOOM_MIN = 11;
+export const MAP_ZOOM_MAX = 18;
+
+const MIN_ZOOM = MAP_ZOOM_MIN;
+const MAX_ZOOM = MAP_ZOOM_MAX;
 
 /** Used when every point sits at the same spot and there is no span to fit. */
 const SINGLE_POINT_ZOOM = 16;
