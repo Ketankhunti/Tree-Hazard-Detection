@@ -38,3 +38,11 @@ wandb/
 
 # Environment
 .env
+node_modules
+dist
+.DS_Store
+*.local
+
+# runtime data: database + uploaded photos
+/var
+.next

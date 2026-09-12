@@ -1,0 +1,78 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-white text-slate-900 antialiased;
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-slate-900 ring-offset-1;
+  }
+}
+
+@layer components {
+  .panel {
+    @apply border border-slate-200 bg-white;
+  }
+
+  .panel-muted {
+    @apply border border-slate-200 bg-slate-50;
+  }
+
+  .label-caps {
+    @apply text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Print: US Letter portrait, poster only.
+
+   Everything in the app sits inside .no-print. The poster sits outside it, so
+   `display: none` removes all other content from the print box entirely - no
+   reserved space, no blank leading pages.
+   --------------------------------------------------------------------------- */
+@page {
+  size: letter portrait;
+  margin: 0.5in;
+}
+
+@media print {
+  html,
+  body {
+    @apply bg-white;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .hazard-poster {
+    display: block !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    break-after: avoid;
+  }
+
+  /* Keep the red masthead and score blocks solid on paper. */
+  .hazard-poster * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .poster-block {
+    break-inside: avoid;
+  }
+}
