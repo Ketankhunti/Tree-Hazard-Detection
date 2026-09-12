@@ -195,12 +195,24 @@ export async function submitRequest(
     });
   }
 
-  // --- Fire AI analysis in the background (non-blocking) --------------------
-  // The promise is intentionally NOT awaited. The resident's request is
-  // already saved; the AI re-scores it and updates the assessment when done.
-  runAiAnalysis(id, input.description, photo).catch((err) =>
-    console.error("[LLM] Background analysis failed:", (err as Error).message)
-  );
+  // --- Run AI analysis before returning (serverless-safe) -------------------
+  // On Vercel/serverless, background promises are killed when the response is
+  // sent. We must await the AI analysis so it completes within the request
+  // lifecycle. The API route already sets maxDuration=60 to allow for this.
+  // Failures are caught — the text-only classification remains as fallback.
+  const aiClassification = await runAiAnalysis(
+    id,
+    input.description,
+    photo
+  ).catch((err) => {
+    console.error("[LLM] Background analysis failed:", (err as Error).message);
+    return null;
+  });
+
+  if (aiClassification) {
+    classification = aiClassification;
+    photoAnalyzed = !!aiClassification.imageFindings;
+  }
 
   return {
     id,
@@ -237,8 +249,8 @@ async function runAiAnalysis(
   requestId: string,
   description: string,
   photo: SubmittedPhoto | null
-): Promise<void> {
-  if (!hasLLM()) return;
+): Promise<Classification | null> {
+  if (!hasLLM()) return null;
 
   try {
     const aiResult = await analyzeHazard(
@@ -251,10 +263,12 @@ async function runAiAnalysis(
     console.log(
       `[LLM] Background analysis complete for ${requestId} — dangerScore=${classification.dangerScore}`
     );
+    return classification;
   } catch (err) {
     console.error(
       `[LLM] Background analysis failed for ${requestId}:`,
       (err as Error).message
     );
+    return null;
   }
 }
