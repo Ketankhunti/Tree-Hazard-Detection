@@ -361,6 +361,7 @@ interface ImageRow {
   filename: string;
   mime_type: string;
   byte_size: number;
+  data: string | null;
   exif_latitude: number | null;
   exif_longitude: number | null;
   created_at: string;
@@ -373,6 +374,7 @@ function toImage(row: ImageRow): RequestImage {
     filename: row.filename,
     mimeType: row.mime_type,
     byteSize: Number(row.byte_size),
+    data: row.data ?? null,
     exifLatitude: row.exif_latitude,
     exifLongitude: row.exif_longitude,
     createdAt: toIso(row.created_at),
@@ -575,6 +577,7 @@ export async function insertImage(image: {
   filename: string;
   mimeType: string;
   byteSize: number;
+  data?: string | null;
   exifLatitude?: number | null;
   exifLongitude?: number | null;
 }): Promise<void> {
@@ -584,6 +587,7 @@ export async function insertImage(image: {
     filename: image.filename,
     mime_type: image.mimeType,
     byte_size: image.byteSize,
+    data: image.data ?? null,
     exif_latitude: image.exifLatitude ?? null,
     exif_longitude: image.exifLongitude ?? null,
   });

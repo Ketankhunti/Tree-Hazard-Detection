@@ -24,7 +24,6 @@ import {
   MAX_IMAGE_BYTES,
   filenameFor,
   newImageId,
-  writeImage,
 } from "@/backend/services/storage";
 import type { Classification, RequestStatus } from "@/shared/types";
 import {
@@ -184,23 +183,13 @@ export async function submitRequest(
   if (photo) {
     const imageId = newImageId();
     const filename = filenameFor(imageId, photo.mimeType);
-    try {
-      await writeImage(filename, photo.data);
-    } catch (err) {
-      // Disk writes fail on serverless platforms (read-only filesystem).
-      // The image metadata is still stored in the database; only the
-      // binary blob is lost. Log and continue — the request must succeed.
-      console.error(
-        "[storage] Could not write photo to disk (expected on serverless):",
-        (err as Error).message
-      );
-    }
     await insertImage({
       id: imageId,
       requestId: id,
       filename,
       mimeType: photo.mimeType,
       byteSize: photo.data.byteLength,
+      data: photo.data.toString("base64"),
       exifLatitude: exif?.latitude ?? null,
       exifLongitude: exif?.longitude ?? null,
     });

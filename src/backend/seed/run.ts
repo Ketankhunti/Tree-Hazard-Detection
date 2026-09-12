@@ -21,10 +21,8 @@ import {
   saveClassification,
 } from "@/backend/db/repository";
 import {
-  ensureUploadDir,
   filenameFor,
   newImageId,
-  writeImage,
 } from "@/backend/services/storage";
 import { classifyComplaint } from "@/backend/domain/scoring";
 import {
@@ -102,13 +100,13 @@ async function seedOne(fixture: Fixture): Promise<void> {
       }),
       "utf8"
     );
-    await writeImage(filename, body);
     await insertImage({
       id: imageId,
       requestId: fixture.id,
       filename,
       mimeType: PLACEHOLDER_MIME,
       byteSize: body.byteLength,
+      data: body.toString("base64"),
       exifLatitude: fixture.locationSource === "exif" ? fixture.latitude : null,
       exifLongitude: fixture.locationSource === "exif" ? fixture.longitude : null,
     });
@@ -206,8 +204,6 @@ async function main(): Promise<void> {
     await report();
     return;
   }
-
-  ensureUploadDir();
 
   // One transaction would be nicer, but image writes are async; the seeder is
   // a dev-only script and a partial run is fixed by re-running with --reset.

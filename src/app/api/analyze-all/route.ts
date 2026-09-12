@@ -6,7 +6,7 @@ import {
   getImages,
   saveClassification,
 } from "@/backend/db/repository";
-import { readImage } from "@/backend/services/storage";
+
 import {
   analyzeHazard,
   aiResultToClassification,
@@ -73,12 +73,9 @@ async function processBatch(
         let photoBuffer: Buffer | null = null;
         let mimeType: string | null = null;
 
-        if (images.length > 0) {
-          const bytes = await readImage(images[0].filename);
-          if (bytes) {
-            photoBuffer = bytes;
-            mimeType = images[0].mimeType;
-          }
+        if (images.length > 0 && images[0].data) {
+          photoBuffer = Buffer.from(images[0].data, "base64");
+          mimeType = images[0].mimeType;
         }
 
         const result = await analyzeHazard(

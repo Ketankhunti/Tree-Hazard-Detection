@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 
 import { hasLLM } from "@/backend/config";
 import { getRequest, getImages, saveClassification } from "@/backend/db/repository";
-import { readImage } from "@/backend/services/storage";
 import {
   analyzeHazard,
   aiResultToClassification,
@@ -49,12 +48,9 @@ export async function POST(request: Request) {
   let photoBuffer: Buffer | null = null;
   let mimeType: string | null = null;
 
-  if (images.length > 0) {
-    const bytes = await readImage(images[0].filename);
-    if (bytes) {
-      photoBuffer = bytes;
-      mimeType = images[0].mimeType;
-    }
+  if (images.length > 0 && images[0].data) {
+    photoBuffer = Buffer.from(images[0].data, "base64");
+    mimeType = images[0].mimeType;
   }
 
   try {

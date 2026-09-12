@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 
 import { getImage, getRequest } from "@/backend/db/repository";
 import { PLACEHOLDER_MIME, placeholderPhotoSvg } from "@/backend/seed/placeholder-photo";
-import { readImage, writeImage } from "@/backend/services/storage";
 import { CLOSED_STATUSES } from "@/shared/types";
 
 export const runtime = "nodejs";
@@ -11,9 +10,9 @@ export const dynamic = "force-dynamic";
 /**
  * Serves a complaint photo by image id.
  *
- * Photos live outside the web root. When the database was seeded on Supabase but
- * `var/uploads` was never populated locally (or was wiped), seeded SVG
- * placeholders are regenerated on first request and written back to disk.
+ * Photos are stored as base64 in the database `images.data` column so they
+ * work on serverless platforms (Vercel) with no persistent filesystem.
+ * Seeded SVG placeholders are generated on the fly when the data column is null.
  */
 export async function GET(
   _request: Request,
@@ -24,9 +23,11 @@ export async function GET(
     return NextResponse.json({ error: "Image not found" }, { status: 404 });
   }
 
-  let bytes = await readImage(image.filename);
+  let bytes: Buffer | null = null;
 
-  if (!bytes && image.mimeType === PLACEHOLDER_MIME) {
+  if (image.data) {
+    bytes = Buffer.from(image.data, "base64");
+  } else if (image.mimeType === PLACEHOLDER_MIME) {
     const request = await getRequest(image.requestId);
     if (request) {
       bytes = Buffer.from(
@@ -37,7 +38,6 @@ export async function GET(
         }),
         "utf8"
       );
-      await writeImage(image.filename, bytes);
     }
   }
 

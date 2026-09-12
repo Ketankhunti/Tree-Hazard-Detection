@@ -68,6 +68,8 @@ export interface RequestImage {
   filename: string;
   mimeType: string;
   byteSize: number;
+  /** Base64-encoded image data stored in the database (serverless-safe). */
+  data: string | null;
   /** Coordinates lifted from photo EXIF, when the phone recorded them. */
   exifLatitude: number | null;
   exifLongitude: number | null;
