@@ -239,3 +239,15 @@ requests. It deliberately contains:
 
 All seeded emails are `@example.com`. Nothing in the dataset can reach a real
 inbox.
+
+## Team & Contributors
+
+- **Devang Jalag** ([@devang-jalag](https://github.com/devang-jalag)) — Google Maps SDK architecture (chosen over Leaflet), Cloud Storage photo pipeline, inspection UI, and investor pitch deck
+- **Ketan Khunti** ([@ketan5050](https://github.com/ketan5050)) — Backend architecture, Supabase REST layer, LLM pipeline & deployment
+- **Sanif Ali Momin** ([@sanifalimomin](https://github.com/sanifalimomin)) — Complaint intake flow & admin authentication
+- **Tarun Chauhan** — Data integration & test fixtures
+
+### Presentation & Pitch Decks
+- `CanopyGuard_Executive_Pitch.pptx` — Executive investor pitch deck
+- `Tree_Hazard_Detection_Pitch.pptx` — Project pitch deck
+- `presentation.html` — Interactive pitch presentation

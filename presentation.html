@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CanopyGuard: Which Tree Falls First? — Executive Pitch</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-earth: #FAF7F2;
+      --forest-deep: #112716;
+      --forest-card: #19381E;
+      --moss-green: #2B5226;
+      --sage-accent: #487A3E;
+      --sage-light: #E4EFE1;
+      --terracotta: #BC6C25;
+      --terracotta-light: #FDF1E6;
+      --earth-bark: #8C5332;
+      --card-bg: #FFFFFF;
+      --card-border: #E3DED6;
+      --text-dark: #19231D;
+      --text-muted: #56645C;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: #09160D;
+      color: var(--text-dark);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      overflow: hidden;
+      user-select: none;
+    }
+
+    /* Presentation Frame (16:9 Widescreen) */
+    .deck-container {
+      position: relative;
+      width: 1200px;
+      height: 675px;
+      max-width: 95vw;
+      max-height: calc(95vw * 9 / 16);
+      aspect-ratio: 16 / 9;
+      background: var(--bg-earth);
+      border-radius: 16px;
+      box-shadow: 0 25px 65px rgba(0, 0, 0, 0.5);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Individual Slide */
+    .slide {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      padding: 40px 52px;
+      display: none;
+      flex-direction: column;
+      opacity: 0;
+      transition: opacity 0.25s ease, transform 0.25s ease;
+      transform: scale(0.99);
+    }
+
+    .slide.active {
+      display: flex;
+      opacity: 1;
+      transform: scale(1);
+    }
+
+    /* Dark Theme Slide */
+    .slide.dark-slide {
+      background: radial-gradient(circle at 80% 20%, #1B3F21 0%, #0F2314 60%, #0B190E 100%);
+      color: #FAF7F2;
+    }
+
+    /* Header Components */
+    .slide-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 5px 13px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+      width: fit-content;
+      margin-bottom: 12px;
+    }
+
+    .slide-tag.forest-tag {
+      background: #254D22;
+      color: #FAF7F2;
+      border: 1px solid #3F7539;
+    }
+
+    .slide-tag.earth-tag {
+      background: var(--terracotta-light);
+      color: var(--terracotta);
+      border: 1px solid #EBC6A4;
+    }
+
+    .slide-title {
+      font-size: 32px;
+      font-weight: 800;
+      color: var(--forest-deep);
+      line-height: 1.18;
+      margin-bottom: 6px;
+    }
+
+    .slide.dark-slide .slide-title {
+      color: #FAF7F2;
+    }
+
+    .slide-subtitle {
+      font-size: 16px;
+      color: var(--text-muted);
+      font-weight: 500;
+      margin-bottom: 18px;
+    }
+
+    .slide.dark-slide .slide-subtitle {
+      color: #C2DEC0;
+    }
+
+    .team-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      padding: 8px 18px;
+      border-radius: 24px;
+      font-size: 13px;
+      color: #E2EFE0;
+      margin-bottom: 26px;
+      width: fit-content;
+    }
+
+    .team-badge strong {
+      color: #FFFFFF;
+      font-weight: 700;
+    }
+
+    /* Grid Layouts */
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 18px;
+      flex: 1;
+    }
+
+    /* Earth Cards */
+    .earth-card {
+      background: var(--card-bg);
+      border: 1.5px solid var(--card-border);
+      border-radius: 12px;
+      padding: 20px 20px;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.03);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .earth-card.dark-card {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1.5px solid #2B572F;
+    }
+
+    .earth-card.highlight-card {
+      border: 2px solid var(--terracotta);
+      background: #FFFDF9;
+    }
+
+    .earth-card.sage-card {
+      border: 2px solid var(--sage-accent);
+      background: #FAFCF9;
+    }
+
+    .card-header-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      padding: 3px 10px;
+      border-radius: 12px;
+      width: fit-content;
+      margin-bottom: 10px;
+    }
+
+    .card-title {
+      font-size: 17px;
+      font-weight: 800;
+      color: var(--forest-deep);
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .earth-card.dark-card .card-title {
+      color: #FAF7F2;
+    }
+
+    /* Clean Bullet Points */
+    .bullets {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+    }
+
+    .bullets li {
+      font-size: 12.8px;
+      color: var(--text-dark);
+      line-height: 1.45;
+      position: relative;
+      padding-left: 17px;
+    }
+
+    .bullets li::before {
+      content: "•";
+      position: absolute;
+      left: 0;
+      top: -1px;
+      color: var(--terracotta);
+      font-weight: 900;
+      font-size: 17px;
+    }
+
+    .bullets.sage-bullets li::before {
+      color: var(--sage-accent);
+    }
+
+    .bullets.dark-theme li {
+      color: #DDECD8;
+    }
+
+    .bullets.dark-theme li::before {
+      color: #8CC47E;
+    }
+
+    /* Thank You Footer Strip */
+    .thankyou-strip {
+      margin-top: 14px;
+      background: linear-gradient(90deg, #112716 0%, #1A3E20 100%);
+      border: 1px solid #2B572F;
+      border-radius: 10px;
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: #FAF7F2;
+    }
+
+    .thankyou-text {
+      font-size: 14px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .thankyou-sub {
+      font-size: 12px;
+      color: #C2DEC0;
+    }
+
+    /* Bottom Controller Bar */
+    .controls-bar {
+      margin-top: 16px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      color: #C0D6C3;
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .view-toggle {
+      display: inline-flex;
+      background: #112613;
+      border: 1px solid #2B572F;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .view-toggle button {
+      background: transparent;
+      border: none;
+      color: #9EB9A1;
+      padding: 7px 14px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .view-toggle button.active {
+      background: var(--sage-accent);
+      color: #FFFFFF;
+    }
+
+    .nav-btn {
+      background: #173319;
+      border: 1px solid #2B572F;
+      color: #FAF7F2;
+      padding: 8px 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 700;
+      transition: all 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .nav-btn:hover {
+      background: var(--sage-accent);
+      border-color: #6DA444;
+      color: #FFFFFF;
+    }
+
+    .pill-counter {
+      background: #173319;
+      padding: 6px 14px;
+      border-radius: 20px;
+      border: 1px solid #2B572F;
+      letter-spacing: 1px;
+    }
+
+    /* All Slides Continuous View Mode */
+    body.all-slides-mode {
+      overflow-y: auto !important;
+      padding: 40px 0;
+      height: auto;
+      min-height: 100vh;
+    }
+
+    body.all-slides-mode .deck-container {
+      width: 1100px;
+      max-width: 95vw;
+      height: auto;
+      aspect-ratio: auto;
+      background: transparent;
+      box-shadow: none;
+      border-radius: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 36px;
+    }
+
+    body.all-slides-mode .slide {
+      position: relative !important;
+      display: flex !important;
+      opacity: 1 !important;
+      transform: none !important;
+      width: 100% !important;
+      height: 618.75px !important;
+      border-radius: 14px;
+      box-shadow: 0 16px 40px rgba(0,0,0,0.35);
+      page-break-after: always;
+      break-after: page;
+    }
+
+    body.all-slides-mode .slide:not(.dark-slide) {
+      background: var(--bg-earth) !important;
+    }
+
+    /* Print View */
+    @page {
+      size: 11in 6.1875in; /* 16:9 Widescreen aspect ratio */
+      margin: 0;
+    }
+
+    @media print {
+      html, body {
+        width: 100% !important;
+        height: auto !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        background: #FAF7F2 !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+        overflow: visible !important;
+      }
+      .controls-bar {
+        display: none !important;
+      }
+      .deck-container {
+        width: 100% !important;
+        max-width: none !important;
+        height: auto !important;
+        box-shadow: none !important;
+        border-radius: 0 !important;
+        position: static !important;
+        background: transparent !important;
+        display: block !important;
+      }
+      .slide {
+        position: relative !important;
+        display: flex !important;
+        opacity: 1 !important;
+        transform: none !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+        page-break-after: always !important;
+        break-after: page !important;
+        box-sizing: border-box !important;
+        padding: 44px 54px !important;
+        margin: 0 !important;
+        border-radius: 0 !important;
+      }
+      .slide:not(.dark-slide) {
+        background: #FAF7F2 !important;
+      }
+      .slide.dark-slide {
+        background: #0F2314 !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 16:9 Presentation Frame (2 Slides Only) -->
+  <div class="deck-container" id="deck">
+
+    <!-- SLIDE 1: EXECUTIVE HOOK & PROBLEM/OPPORTUNITY -->
+    <div class="slide dark-slide active">
+      <div style="flex: 1; display: flex; flex-direction: column; justify-content: center;">
+        
+        <div class="slide-tag forest-tag">
+          🌲 URBAN AI INFRASTRUCTURE • HALIFAX REGIONAL MUNICIPALITY
+        </div>
+
+        <h1 class="slide-title" style="font-size: 46px; margin-bottom: 8px;">
+          CanopyGuard: Which Tree Falls First?
+        </h1>
+        <p class="slide-subtitle" style="font-size: 19px; margin-bottom: 20px;">
+          Predictive Urban Hazard Triage Protecting Cities, Power Grids & Human Lives
+        </p>
+
+        <div class="team-badge">
+          <span>Presented by:</span>
+          <strong>Devang Jalag • Ketan Khunti • Sanif • Tarun</strong>
+        </div>
+
+        <!-- 3 High-Stake Investor Pillars -->
+        <div class="grid-3">
+          <div class="earth-card dark-card">
+            <div class="card-header-pill" style="background:#4A2810; color:#F5B382;">$12M+ MUNICIPAL RISK</div>
+            <div class="card-title">⚠️ Blind Backlog Crisis</div>
+            <ul class="bullets dark-theme">
+              <li><strong>290+ unranked complaints</strong> stuck in obsolete first-come FIFO queue</li>
+              <li>Lethal deadwood over schoolyards waits behind cosmetic pruning</li>
+              <li>Atlantic gale storms turn ignored trunk splits into fatal blackouts</li>
+              <li>Cities face millions in wrongful death & infrastructure liability</li>
+            </ul>
+          </div>
+
+          <div class="earth-card dark-card" style="border-color: #3F7539;">
+            <div class="card-header-pill" style="background:#1B4520; color:#A4DE9D;">85% EFFICIENCY GAIN</div>
+            <div class="card-title">⚡ Instant Automated Triage</div>
+            <ul class="bullets dark-theme">
+              <li>Replaces 3-week backlog with <strong>sub-second priority scoring</strong></li>
+              <li>Dynamic 0–100 scale: 50% Danger, 25% Wait, 15% Location, 10% Review</li>
+              <li>Real HRM open data synchronized live across <strong>80,000+ public trees</strong></li>
+              <li>One-click printable arborist incident posters for immediate truck rollout</li>
+            </ul>
+          </div>
+
+          <div class="earth-card dark-card" style="border-color: #BC6C25;">
+            <div class="card-header-pill" style="background:#4E2F12; color:#FAC090;">UNBREAKABLE MOAT</div>
+            <div class="card-title">👁 Anti-Gaming Vision AI</div>
+            <ul class="bullets dark-theme">
+              <li>LlamaParse + Vision LLM extracts arborist defect taxonomy</li>
+              <li><strong>80% photo weighting</strong> stops panic-word queue jumpers</li>
+              <li>Cross-examines claim text against visual root & wire proof</li>
+              <li>"Unsure" guardrail stops AI hallucinations before dispatch</li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- SLIDE 2: BUSINESS VALUE, ARCHITECTURE & SHAREHOLDER ROI -->
+    <div class="slide">
+      <div style="flex: 1; display: flex; flex-direction: column;">
+        
+        <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+          <div>
+            <div class="slide-tag earth-tag">
+              📈 SCALE & SHAREHOLDER VALUE
+            </div>
+            <h2 class="slide-title">
+              The High-ROI Solution: Scalable Risk Triage & Monetization
+            </h2>
+            <p class="slide-subtitle" style="margin-bottom: 14px;">
+              Enterprise Architecture, Direct Municipal ROI, and Nationwide SaaS Expansion
+            </p>
+          </div>
+        </div>
+
+        <!-- 3 Core Investor Pillars -->
+        <div class="grid-3">
+          <div class="earth-card sage-card">
+            <div class="card-header-pill" style="background:#E5F0E1; color:#234C1D;">ENTERPRISE CLOUD MOAT</div>
+            <div class="card-title">☁ Cloud-Native Stack</div>
+            <ul class="bullets sage-bullets">
+              <li><strong>Google Cloud Storage:</strong> Automated public blob bucket (<code>tree-hazard-images-503718</code>)</li>
+              <li><strong>Google Maps Platform:</strong> Dual-layer geocoding & static street inspections</li>
+              <li><strong>Supabase PostgreSQL:</strong> Immutable municipal audit trail & arborist logs</li>
+              <li><strong>Zero-delay Node.js + React 19:</strong> Tested, 100% CI pass rate, production-ready</li>
+            </ul>
+          </div>
+
+          <div class="earth-card highlight-card">
+            <div class="card-header-pill" style="background:#FDF0E2; color:#964D12;">DIRECT FINANCIAL ROI</div>
+            <div class="card-title">💰 Massive Cost Savings</div>
+            <ul class="bullets">
+              <li><strong>$2.4M saved per 100k residents</strong> in avoided storm grid repair & liability</li>
+              <li><strong>60% reduction in truck rolls:</strong> Arborists dispatched only with verified photo evidence</li>
+              <li><strong>Proximity route clustering:</strong> Slashes crew travel fuel and deadhead miles</li>
+              <li><strong>Fair & equitable:</strong> Transparent math protects underserved neighborhoods</li>
+            </ul>
+          </div>
+
+          <div class="earth-card">
+            <div class="card-header-pill" style="background:#EDE7DF; color:#524338;">MARKET EXPANSION</div>
+            <div class="card-title">🚀 $1.8B Municipal TAM</div>
+            <ul class="bullets">
+              <li><strong>4,200+ North American cities</strong> operate on the same broken 311 tree queue</li>
+              <li>Plug-and-play ArcGIS connector allows turnkey municipal onboarding in < 48 hours</li>
+              <li>Insurance & utility partnership upside: powerline vegetation monitoring contracts</li>
+              <li>Proven & validated today in Halifax Regional Municipality</li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- Investor Thank You Strip -->
+        <div class="thankyou-strip">
+          <div>
+            <div class="thankyou-text">
+              🌲 Thank You! Let's Protect Cities & Power Grids Together.
+            </div>
+            <div class="thankyou-sub">
+              Questions & Demonstration • Devang Jalag, Ketan Khunti, Sanif, Tarun
+            </div>
+          </div>
+          <div style="font-size: 12px; font-weight: 800; background: var(--terracotta); padding: 6px 14px; border-radius: 20px; letter-spacing: 0.5px;">
+            READY FOR SCALE
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Bottom Navigation Controller Bar -->
+  <div class="controls-bar">
+    <div class="view-toggle">
+      <button id="btn-slideshow" class="active" onclick="setViewMode('slideshow')">📺 Slideshow</button>
+      <button id="btn-all" onclick="setViewMode('all')">📄 All 2 Slides (Print / PDF)</button>
+    </div>
+    <div style="display:flex; align-items:center; gap:8px;" id="slideshow-controls">
+      <button class="nav-btn" onclick="prevSlide()">← Prev</button>
+      <div class="pill-counter" id="counter">1 / 2</div>
+      <button class="nav-btn" onclick="nextSlide()">Next →</button>
+      <button class="nav-btn" onclick="toggleFullscreen()">⛶ Fullscreen</button>
+    </div>
+    <button class="nav-btn" style="background:#264E24; border-color:#487E44;" onclick="triggerPrint()">🖨 Save as PDF</button>
+    <span class="shortcut-tip">Tip: Arrow keys or Spacebar navigate slides</span>
+  </div>
+
+  <script>
+    const slides = document.querySelectorAll('.slide');
+    const counter = document.getElementById('counter');
+    const btnSlideshow = document.getElementById('btn-slideshow');
+    const btnAll = document.getElementById('btn-all');
+    const slideshowControls = document.getElementById('slideshow-controls');
+    let current = 0;
+    let mode = 'slideshow';
+
+    function setViewMode(newMode) {
+      mode = newMode;
+      if (mode === 'all') {
+        document.body.classList.add('all-slides-mode');
+        btnAll.classList.add('active');
+        btnSlideshow.classList.remove('active');
+        slideshowControls.style.display = 'none';
+        slides.forEach(s => s.classList.add('active'));
+      } else {
+        document.body.classList.remove('all-slides-mode');
+        btnSlideshow.classList.add('active');
+        btnAll.classList.remove('active');
+        slideshowControls.style.display = 'flex';
+        showSlide(current);
+      }
+    }
+
+    function showSlide(index) {
+      if (mode === 'all') return;
+      if (index < 0) index = 0;
+      if (index >= slides.length) index = slides.length - 1;
+      slides.forEach((s, i) => {
+        s.classList.toggle('active', i === index);
+      });
+      current = index;
+      counter.textContent = `${current + 1} / ${slides.length}`;
+    }
+
+    function nextSlide() {
+      if (current < slides.length - 1) showSlide(current + 1);
+    }
+
+    function prevSlide() {
+      if (current > 0) showSlide(current - 1);
+    }
+
+    function toggleFullscreen() {
+      const deck = document.getElementById('deck');
+      if (!document.fullscreenElement) {
+        deck.requestFullscreen().catch(err => {
+          alert(`Error attempting fullscreen: ${err.message}`);
+        });
+      } else {
+        document.exitFullscreen();
+      }
+    }
+
+    function triggerPrint() {
+      window.print();
+    }
+
+    // Auto-detect ?view=all or #all for online converters
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('view') === 'all' || window.location.hash === '#all') {
+      setViewMode('all');
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (mode === 'all') return;
+      if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') {
+        e.preventDefault();
+        nextSlide();
+      } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
+        e.preventDefault();
+        prevSlide();
+      } else if (e.key.toLowerCase() === 'f') {
+        toggleFullscreen();
+      }
+    });
+  </script>
+</body>
+</html>
